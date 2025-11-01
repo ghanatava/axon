@@ -1,0 +1,302 @@
+# Axon Project .gitignore
+
+# ===========================
+# eBPF Build Artifacts
+# ===========================
+*.bpf.o
+*.bpf.c.o
+*.ll
+*.bc
+vmlinux.h
+*.skel.h
+*.bpf.h.tmp
+
+# BPF object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# libbpf build artifacts
+/ebpf/libbpf/
+/ebpf/.output/
+
+# ===========================
+# Go Build Artifacts
+# ===========================
+# Binaries
+/bin/
+/dist/
+axon-agent
+axon-operator
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Go build cache
+.cache/
+
+# ===========================
+# Kubernetes / Operator
+# ===========================
+# Kubebuilder/Operator SDK
+/bin/
+/testbin/
+/cover.out
+
+# Generated CRD manifests
+config/crd/bases/*.yaml.bak
+
+# kustomize build outputs
+/config/default/kustomization.yaml.bak
+
+# Helm charts (if applicable)
+*.tgz
+charts/*/charts/
+
+# Kubernetes configs with secrets
+*-secret.yaml
+*-secrets.yaml
+kubeconfig*.yaml
+
+# ===========================
+# C/C++ Build Artifacts
+# ===========================
+# Compiled Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.la
+*.a
+*.lib
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# ===========================
+# IDE and Editor Files
+# ===========================
+# VSCode
+.vscode/
+*.code-workspace
+.history/
+
+# GoLand / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Vim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ===========================
+# Operating System Files
+# ===========================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# ===========================
+# Docker / Container
+# ===========================
+# Docker build context
+.dockerignore
+
+# Container images (if building locally)
+*.tar
+*.tar.gz
+
+# ===========================
+# Development & Testing
+# ===========================
+# Local environment files
+.env
+.env.local
+.env.*.local
+*.local
+
+# Test data
+/testdata/generated/
+/test-results/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+*.pid
+
+# Profiling data
+*.prof
+*.pprof
+*.trace
+
+# Benchmark results
+benchmark-*.txt
+
+# ===========================
+# Build Directories
+# ===========================
+/build/
+/output/
+/_output/
+/.build/
+
+# ===========================
+# Package Manager Files
+# ===========================
+# Go modules cache
+/go.sum.bak
+
+# NPM (if you have any web UI)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# ===========================
+# Documentation
+# ===========================
+# Generated documentation
+/docs/_build/
+/site/
+
+# ===========================
+# CI/CD
+# ===========================
+# GitHub Actions artifacts (local testing)
+.github/workflows/*.local.yml
+
+# ===========================
+# Secrets & Credentials
+# ===========================
+# Never commit secrets!
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*-key.json
+credentials*.json
+secrets*.yaml
+token*.txt
+
+# ===========================
+# Performance & Profiling
+# ===========================
+*.perf
+*.svg
+flamegraph*.svg
+perf.data
+perf.data.old
+
+# ===========================
+# Misc
+# ===========================
+# Core dumps
+core
+core.*
+
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Backups
+*.bak
+*.backup
+*.old
