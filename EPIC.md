@@ -1,29 +1,26 @@
-# Axon - Implementation Epic
+# Axon - Implementation Epic (Rust Edition)
 
-**Project Goal:** Build a production-quality eBPF-based L7 HTTP observability and network policy engine for Kubernetes using:
+**Project Goal:** Build a production-quality eBPF-based L7 HTTP/QUIC observability and network policy engine for Kubernetes using Rust + C
 
-- **C** for eBPF programs (kernel side)
-- **Rust** for userspace agent and Kubernetes operator
-
-**Timeline:** 8–12 weeks (part-time, ~15–20 hours/week)
+**Timeline:** 10-14 weeks (part-time, ~15-20 hours/week)
 
 **Current Phase:** 🚀 Phase 1 - Core eBPF Development
+
+**Architecture:** Polyglot approach - C for eBPF programs, Rust for userspace (agent + operator)
 
 ---
 
 ## Table of Contents
-
 - [Overview](#overview)
+- [Why Rust + C?](#why-rust--c)
 - [Success Criteria](#success-criteria)
-- [Phase 1: Core eBPF](#phase-1-core-ebpf-development)
-- [Phase 2: Agent Development](#phase-2-agent-development)
-- [Phase 3: Kubernetes Integration](#phase-3-kubernetes-integration)
+- [Phase 1: Core eBPF (C)](#phase-1-core-ebpf-development-c)
+- [Phase 2: Rust Agent + quiche](#phase-2-rust-agent-development--quiche-integration)
+- [Phase 3: Kubernetes Integration](#phase-3-kubernetes-integration-kube-rs)
 - [Phase 4: Policy Enforcement](#phase-4-policy-enforcement)
 - [Phase 5: Metrics & Visualization](#phase-5-metrics--visualization)
 - [Phase 6: Production Hardening](#phase-6-production-hardening)
 - [Progress Tracking](#progress-tracking)
-- [Notes & Learnings](#notes--learnings)
-- [Resources](#resources)
 
 ---
 
@@ -32,1140 +29,945 @@
 This epic tracks the complete development of Axon from initial eBPF "hello world" to a production-ready Kubernetes operator. Each phase builds on the previous, with clear milestones and deliverables.
 
 ### Development Philosophy
+1. **Polyglot by design** - C for kernel (eBPF), Rust for userspace (safety + performance)
+2. **Start minimal** - Get something working end-to-end quickly
+3. **Iterate and expand** - Add features incrementally
+4. **Memory safety first** - Leverage Rust's guarantees to avoid leaks
+5. **Test continuously** - Don't skip validation
+6. **Document as you go** - Future you will thank present you
 
-1. **Start minimal** – Get something working end-to-end quickly.  
-2. **Iterate and expand** – Add features incrementally with feedback from your own usage.  
-3. **Test continuously** – Don’t skip validation; regressions in kernel space suck.  
-4. **Document as you go** – Future you will not remember why you chose that BPF map layout.  
+---
+
+## Why Rust + C?
+
+### The Polyglot Advantage
+
+**C for eBPF Programs:**
+- ✅ Kernel verifier expects C (mature, stable)
+- ✅ libbpf ecosystem is C-native
+- ✅ All eBPF examples and docs use C
+- ✅ Direct kernel structure access
+- ⚠️ Memory safety guaranteed by verifier (sandboxed)
+
+**Rust for Userspace:**
+- ✅ Memory safety without GC (no leaks, no use-after-free)
+- ✅ Fearless concurrency (data race prevention)
+- ✅ Zero-cost abstractions
+- ✅ quiche integration (native Rust QUIC/HTTP3)
+- ✅ Modern error handling (Result types)
+- ✅ No runtime overhead vs C/C++
+- ✅ Growing ecosystem: Aya, libbpf-rs, kube-rs
+
+**Best of Both Worlds:**
+```
+┌────────────────────────────────────┐
+│     Kernel Space (C + eBPF)        │
+│  • Verified by kernel              │
+│  • Memory safe by design           │
+│  • High performance                │
+└────────────────┬───────────────────┘
+                 │ Ring Buffer
+┌────────────────▼───────────────────┐
+│   User Space (Rust)                │
+│  • Memory safe (ownership)         │
+│  • No GC pauses                    │
+│  • Fearless concurrency            │
+│  • quiche for QUIC                 │
+└────────────────────────────────────┘
+```
+
+### Key Libraries
+
+**eBPF (C):**
+- libbpf (kernel loading, CO-RE)
+- vmlinux.h (kernel types)
+
+**Rust:**
+- `aya` or `libbpf-rs` (eBPF program loading)
+- `quiche` (Cloudflare QUIC/HTTP3)
+- `kube` (Kubernetes client)
+- `prometheus` (metrics)
+- `tokio` (async runtime)
+- `tracing` (structured logging)
 
 ---
 
 ## Success Criteria
 
-### Minimum Viable Product (MVP)
+**Minimum Viable Product (MVP):**
+- ✅ eBPF programs successfully parse HTTP/1.1, HTTP/2, and HTTP/3 (QUIC)
+- ✅ Rust agent loads eBPF and processes events
+- ✅ quiche integration for QUIC parsing
+- ✅ Kubernetes operator manages deployment (kube-rs)
+- ✅ Prometheus metrics exported
+- ✅ Basic Grafana dashboard showing HTTP/QUIC metrics
+- ✅ L7 network policies can be created and enforced
+- ✅ Works on 3+ different Linux kernel versions (CO-RE)
+- ✅ Zero memory leaks (validated with valgrind/miri)
 
-- ✅ eBPF programs successfully parse HTTP requests/responses (at least HTTP/1.x)
-- ✅ Rust agent loads eBPF programs and consumes events via ring/perf buffer
-- ✅ Rust agent enriches events with Kubernetes metadata
-- ✅ Rust-based Kubernetes operator manages Axon DaemonSet and CRDs
-- ✅ Prometheus metrics exported and consumable by Grafana
-- ✅ Basic Grafana dashboard showing HTTP metrics (latency, status codes, throughput)
-- ✅ L7 network policies can be authored as CRDs and enforced via eBPF maps
-- ✅ eBPF programs work across at least 3 different Linux kernel versions using CO-RE
-
-### Stretch Goals
-
-- Service dependency graph visualization (who talks to whom, on which endpoints)
-- Distributed tracing correlation (span/trace IDs from headers)
-- Basic anomaly/attack detection (spikes, 5xx, unusual paths)
-- Multi-protocol support: gRPC, HTTP/2, (later) HTTP/3/QUIC via Rust `quiche`
-- Multi-cluster story (not full mesh, but at least conceptual design)
+**Stretch Goals:**
+- Service dependency graph visualization
+- Distributed tracing correlation (OpenTelemetry)
+- HTTP/3 connection migration tracking
+- Advanced anomaly detection with ML
 
 ---
 
-## Phase 1: Core eBPF Development
+## Phase 1: Core eBPF Development (C)
 
-**Duration:** Week 1–3 (3 weeks)  
-**Goal:** Build and validate eBPF programs that hook into TCP/socket operations and parse HTTP traffic.
-
----
+**Duration:** Week 1-3 (3 weeks)  
+**Goal:** Build and validate eBPF programs that can hook into socket operations and parse HTTP/QUIC traffic
 
 ### 1.1: Development Environment Setup
-
-**Duration:** 2–3 days  
-**Status:** ⬜ Not Started  
+**Duration:** 2-3 days  
+**Status:** ⬜ Not Started
 
 **Tasks:**
-
-- [ ] Set up Linux development VM (e.g. Ubuntu 22.04 or Fedora 38+)
-  - Verify kernel version (5.10+):
-    ```bash
-    uname -r
-    ```
-  - Check BTF availability:
-    ```bash
-    ls /sys/kernel/btf/vmlinux
-    ```
-- [ ] Install build dependencies:
+- [ ] Set up Linux development VM (Ubuntu 22.04 or Fedora 38+)
+  - Verify kernel version (5.10+): `uname -r`
+  - Check BTF availability: `ls /sys/kernel/btf/vmlinux`
+- [ ] Install C/eBPF dependencies
   ```bash
-  sudo apt-get update
+  # Ubuntu/Debian
   sudo apt-get install -y \
-    clang-14 llvm-14 libbpf-dev \
-    linux-headers-$(uname -r) \
-    build-essential git pkg-config \
-    make
- Install bpftool for debugging:
-
-sudo apt-get install -y bpftool
-# or build from source if version is old
- Install Rust toolchain (stable):
-
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-rustup default stable
- Set up project directory structure:
-
-axon/
-├── ebpf/             # eBPF C programs (.c, .h, Makefile)
-├── agent/            # Rust agent (userspace)
-├── operator/         # Rust Kubernetes operator
-├── manifests/        # CRDs, RBAC, DaemonSet, etc.
-├── examples/         # Sample configs / demos
-└── docs/             # Documentation (arch, design, notes)
- Initialize Git repository:
-
-cd axon
-git init
- Create basic Makefile in ebpf/ to:
-
-Build .bpf.o with clang/LLVM
-
-Clean targets
-
-Optionally run basic verifier checks
-
-Deliverable:
-Working local environment with toolchain + repo skeleton and initial Makefile.
-
-1.2: eBPF "Hello World" – TCP Connection Tracing
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Goal: Prove you can load eBPF programs into the kernel and see real events.
-
-Tasks:
-
- Write basic eBPF program: ebpf/tcp_connect_trace.bpf.c
-
-Attach to kprobe/tcp_connect or tracepoint/sock/inet_sock_set_state
-
-Capture:
-
-Source IP
-
-Destination IP
-
-Destination port
-
-Write a small struct into ring buffer or a perf event.
-
- Create ebpf/tcp_connect_trace.h defining event struct and map definitions.
-
- Compile with clang:
-
-cd ebpf
-clang -O2 -g -target bpf \
-  -c tcp_connect_trace.bpf.c \
-  -o tcp_connect_trace.bpf.o
- Load and attach using:
-
-Temporary minimal loader:
-
-Option A: small C loader linked with libbpf
-
-Option B: quick Rust loader using aya or libbpf-rs (if you already decided)
-
- Verify events:
-
-Run curl google.com:80 or curl http://example.com/
-
-Confirm that events are printed in userspace logger.
-
-Success Criteria:
-
-eBPF program loads successfully (no verifier errors).
-
-Events are visible on each TCP connect from test process.
-
-Program survives basic stress test (100+ concurrent connections) without crash.
-
-Deliverable:
-Working TCP connect tracer from kernel → userspace logs.
-
-1.3: Socket-Level HTTP Request Capture
-Duration: 4–5 days
-Status: ⬜ Not Started
-
-Goal: Capture raw HTTP data at socket layer (at least first packet / first bytes of request).
-
-Tasks:
-
- Evaluate hooking options:
-
-socket_filter (classic BSD-like filter at socket level)
-
-kprobe/tcp_sendmsg + kprobe/tcp_recvmsg
-
-sk_msg or tc ingress/egress if necessary
-
- Choose initial approach (likely socket_filter for simplicity).
-
- Implement ebpf/http_socket_filter.bpf.c:
-
-Attach to socket for TCP/IPv4 (SO_ATTACH_BPF style filter).
-
-Filter by destination ports:
-
-80, 8080, 3000, (optionally configurable later).
-
-Capture first N bytes (e.g., 512 or 1024) of the payload.
-
- Define ring buffer event struct that carries:
-
-5-tuple (src/dst IP/port + protocol)
-
-Direction (request vs response, if determinable)
-
-Truncated payload bytes.
-
- Implement per-CPU ring buffer for streaming events.
-
- Testing:
-
-Run a simple HTTP server:
-
-python3 -m http.server 8080
-Send requests via curl:
-
-curl http://localhost:8080/
-Verify that payloads containing GET /... HTTP/1.1 are captured.
-
-Challenges to Solve:
-
-HTTP can span multiple packets:
-
-Decide: support only small requests for now or implement basic reassembly keyed by 5-tuple.
-
-Ring buffer size trade-offs:
-
-Too small → overflow / drops
-
-Too large → memory overhead
-
-Ensuring minimal overhead under load (use wrk later).
-
-Success Criteria:
-
-You can see the first line of HTTP requests in captured data.
-
-No kernel panics, no random RCU / verifier issues.
-
-Overhead stays <5% in simple benchmark.
-
-Deliverable:
-eBPF program that captures HTTP request bytes via socket filter and sends them up via ring buffer.
-
-1.4: HTTP Protocol Parsing in eBPF
-Duration: 5–7 days
-Status: ⬜ Not Started
-
-Goal: Parse just enough HTTP in the kernel to power L7 policies and reduce noise before userspace.
-
-Tasks:
-
- Design the parsing strategy:
-
-Only parse request line + a few headers.
-
-No unbounded loops. Use bounded loops + length checks.
-
-Avoid heavy string operations; treat data as bytes + simple scanning.
-
- For requests, extract:
-
-HTTP method: GET, POST, PUT, DELETE, etc.
-
-Path: e.g., /api/users
-
-HTTP version: HTTP/1.0, HTTP/1.1
-
-Host header (for virtual hosting).
-
- For responses, extract:
-
-Status code: 200, 404, 500, etc.
-
-Optional: Content-Length (for metrics).
-
- Decide where to compute latency:
-
-Option A: store timestamps in BPF maps and compute diff in kernel.
-
-Option B: compute latency in userspace once matching request/response events.
-
- Define struct http_event in ebpf/http_events.h:
-
-struct http_event {
-    u64 timestamp_ns;
-    u32 pid;
-    u32 src_ip;
-    u32 dst_ip;
-    u16 src_port;
-    u16 dst_port;
-    u8  direction;    // 0=request, 1=response
-    u8  method;       // enum: GET=1, POST=2, ...
-    u16 status_code;  // 0 if not set yet
-    u32 latency_ns;   // optional, computed later
-    char path[128];
-    char host[64];
-};
- Emit http_event into ring buffer.
-
- Add strict bounds checking for all memory accesses to satisfy verifier.
-
- Consider simple path truncation rules (if >128 bytes, truncate).
-
-Testing:
-
- Use curl, wget, Python requests to generate traffic:
-
-Long paths
-
-Different methods
-
-Missing Host header
-
- Validate:
-
-Path + method + status code are correctly extracted.
-
-No verifier failures.
-
- Use bpftool prog profile or perf to ensure hot paths are not too expensive.
-
-Success Criteria:
-
-~95%+ of typical HTTP/1.x traffic is parsed correctly for method + path + status.
-
-Program is verifier-clean and stable under various traffic patterns.
-
-Overhead per request remains within target (aim ~<1% CPU per node).
-
-Deliverable:
-Fully functional HTTP event parser in eBPF, generating http_event records.
-
-1.5: CO-RE (Compile Once, Run Everywhere) Support
-Duration: 3–4 days
-Status: ⬜ Not Started
-
-Goal: Make eBPF programs portable across multiple kernels via CO-RE.
-
-Tasks:
-
- Read:
-
-Andrii Nakryiko blog posts on BPF portability & CO-RE.
-
-libbpf-bootstrap examples.
-
- Convert existing programs:
-
-Replace direct struct access with BPF_CORE_READ() macros.
-
-Rely on vmlinux.h instead of distro kernel headers.
-
- Generate vmlinux.h:
-
-bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
- Update Makefile to compile with CO-RE flags.
-
- Test on multiple kernel versions:
-
-5.10 (e.g. older Debian/Ubuntu LTS)
-
-5.15 (Ubuntu 22.04)
-
-6.1+ (newer distros)
-
- Confirm that:
-
-Same .bpf.o file loads fine on each kernel.
-
-No runtime compilation is needed.
-
-Success Criteria:
-
-Single compiled eBPF object works on at least 3 different kernel versions.
-
-No build-time dependencies on specific kernel source trees (only BTF + headers).
-
-Deliverable:
-CO-RE-enabled eBPF builds plus short doc on supported kernel versions.
-
-1.6: Performance Benchmarking & Optimization
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Goal: Quantify Axon’s overhead and optimize hot paths.
-
-Tasks:
-
- Set up benchmark workload:
-
-nginx or another simple HTTP server.
-
-Use wrk / hey / ab for load generation.
-
- Baseline run (no eBPF):
-
-wrk -t4 -c100 -d30s http://localhost:8080/
-Record: RPS, latency distribution, CPU usage.
-
- With eBPF attached:
-
-Repeat the same test.
-
-Record new metrics, overhead delta.
-
- Use tools:
-
-perf top, perf record to see kernel hotspots.
-
-bpftool prog profile to inspect BPF instruction hotness.
-
- Optimize:
-
-Reduce string parsing in kernel.
-
-Avoid unnecessary copies of large payloads.
-
-Use per-CPU maps and ring buffers efficiently.
-
- Document:
-
-Target overhead: <1% CPU at typical load.
-
-Target added latency: ~O(100ns) per request (order of magnitude).
-
-Deliverable:
-Performance report showing baseline vs with Axon eBPF, plus notes on optimizations.
-
-Phase 1 Completion Checklist
- eBPF programs compile and load successfully.
-
- Hooks on TCP/socket layer working.
-
- HTTP requests/responses parsed and exported as structured events.
-
- CO-RE implementation verified across multiple kernels.
-
- Overhead measured and within acceptable bounds.
-
- Code is reasonably documented and organized.
-
- Basic sanity tests exist (even if manual / scripts).
-
-Next: Move to Phase 2 – Rust Agent Development.
-
-Phase 2: Agent Development
-Duration: Week 4–5 (2 weeks)
-Goal: Build a Rust userspace agent that loads eBPF programs, reads events, enriches them with Kubernetes metadata, and exposes Prometheus metrics.
-
-2.1: Rust Agent Scaffolding
-Duration: 1–2 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Initialize Rust workspace:
-
-cargo new --workspace axon
-cd axon
-cargo new agent
-cargo new common
- Directory structure:
-
-agent/
-  src/
-    main.rs
-common/
-  src/
-    lib.rs          # shared types (http_event, config, etc.)
- Define shared HTTP event struct in common/src/lib.rs mirroring struct http_event:
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct HttpEvent {
-    pub timestamp_ns: u64,
-    pub pid: u32,
-    pub src_ip: u32,
-    pub dst_ip: u32,
-    pub src_port: u16,
-    pub dst_port: u16,
-    pub direction: u8,
-    pub method: u8,
-    pub status_code: u16,
-    pub latency_ns: u32,
-    pub path: [u8; 128],
-    pub host: [u8; 64],
+      clang-14 llvm-14 libbpf-dev \
+      linux-headers-$(uname -r) \
+      build-essential git \
+      pkg-config libssl-dev
+  ```
+- [ ] Install Rust toolchain
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  rustup default stable
+  rustup component add rustfmt clippy
+  ```
+- [ ] Install bpftool for debugging
+  ```bash
+  sudo apt-get install linux-tools-common linux-tools-$(uname -r)
+  ```
+- [ ] Set up project directory structure
+  ```
+  axon/
+  ├── Cargo.toml          # Workspace
+  ├── ebpf/               # C eBPF programs
+  ├── axon-agent/         # Rust agent
+  ├── axon-operator/      # Rust operator
+  ├── examples/           # Sample configs
+  └── docs/               # Documentation
+  ```
+- [ ] Initialize Cargo workspace
+  ```bash
+  cargo init --name axon
+  cargo new --lib axon-agent
+  cargo new --lib axon-operator
+  ```
+- [ ] Create Makefile for eBPF builds
+
+**Deliverable:** Working build environment with all dependencies
+
+---
+
+### 1.2: eBPF "Hello World" - TCP Connection Tracing
+**Duration:** 2-3 days  
+**Status:** ⬜ Not Started
+
+**Goal:** Prove we can load eBPF programs and capture kernel events
+
+**Tasks:**
+- [ ] Create `ebpf/` directory structure
+- [ ] Write basic eBPF program: `tcp_connect_trace.bpf.c`
+  ```c
+  #include <vmlinux.h>
+  #include <bpf/bpf_helpers.h>
+  #include <bpf/bpf_tracing.h>
+  
+  SEC("kprobe/tcp_connect")
+  int trace_tcp_connect(struct pt_regs *ctx) {
+      // Capture connection events
+      bpf_printk("TCP connect traced!");
+      return 0;
+  }
+  
+  char LICENSE[] SEC("license") = "GPL";
+  ```
+- [ ] Create corresponding header file: `tcp_connect_trace.h`
+- [ ] Write Makefile for eBPF compilation
+  ```makefile
+  clang -O2 -g -target bpf -D__TARGET_ARCH_x86_64 \
+        -c tcp_connect_trace.bpf.c -o tcp_connect_trace.bpf.o
+  ```
+- [ ] Generate vmlinux.h: `bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h`
+- [ ] Load and test with bpftool
+- [ ] Verify events: `sudo cat /sys/kernel/debug/tracing/trace_pipe`
+
+**Success Criteria:**
+- eBPF program loads without verifier errors
+- Can see TCP connect events when running `curl google.com`
+- Program survives basic stress testing
+
+**Deliverable:** Working TCP connection tracer
+
+---
+
+### 1.3: Socket-Level HTTP Request Capture
+**Duration:** 4-5 days  
+**Status:** ⬜ Not Started
+
+**Goal:** Capture raw HTTP data at socket layer
+
+**Tasks:**
+- [ ] Research best socket hooks for HTTP:
+  - `socket_filter` (recommended)
+  - `kprobe/tcp_sendmsg` and `kprobe/tcp_recvmsg`
+  - `sockops` (socket operations)
+- [ ] Implement `http_socket_filter.bpf.c`
+  - Hook into socket operations
+  - Filter for HTTP ports (80, 8080, 3000, 8000)
+  - Capture first 512 bytes of payload
+- [ ] Set up per-CPU ring buffer
+  ```c
+  struct {
+      __uint(type, BPF_MAP_TYPE_RINGBUF);
+      __uint(max_entries, 256 * 1024);
+  } events SEC(".maps");
+  ```
+- [ ] Handle packet fragmentation strategy
+- [ ] Test with simple HTTP server
+  ```bash
+  python3 -m http.server 8080
+  curl http://localhost:8080/
+  ```
+
+**Success Criteria:**
+- Captures HTTP request line: `GET /path HTTP/1.1`
+- No kernel panics
+- <5% CPU overhead
+
+**Deliverable:** eBPF program capturing raw HTTP socket data
+
+---
+
+### 1.4: HTTP/1.1 Protocol Parsing in eBPF
+**Duration:** 5-7 days  
+**Status:** ⬜ Not Started
+
+**Goal:** Parse HTTP/1.1 requests/responses in kernel space
+
+**Tasks:**
+- [ ] Design HTTP parser with eBPF constraints:
+  - Bounded loops only (verifier requirement)
+  - Max instruction limit (~1 million)
+  - Keep complexity under 512 instructions per branch
+- [ ] Implement HTTP/1.1 request parser:
+  ```c
+  struct http_request {
+      u64 timestamp_ns;
+      u32 pid;
+      u32 src_ip;
+      u32 dst_ip;
+      u16 src_port;
+      u16 dst_port;
+      u8 method;        // GET=1, POST=2, etc.
+      u16 status_code;  // Response only
+      u32 latency_ns;
+      char path[128];
+      char host[64];
+  };
+  ```
+- [ ] Parse essential fields:
+  - [ ] HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
+  - [ ] Path/URI
+  - [ ] HTTP version
+  - [ ] Host header
+  - [ ] Content-Length
+- [ ] Implement HTTP response parser:
+  - [ ] Status code (200, 404, 500, etc.)
+  - [ ] Content-Length
+  - [ ] Calculate latency (request-response match)
+- [ ] Add bounds checking for verifier
+- [ ] Write to ring buffer
+
+**Testing:**
+- [ ] Test various HTTP clients (curl, wget, httpie)
+- [ ] Test different HTTP methods
+- [ ] Test long URLs (>128 chars, truncation)
+- [ ] Test with chunked encoding
+- [ ] Profile with `bpftool prog profile`
+
+**Success Criteria:**
+- Parses 95%+ of standard HTTP/1.1 requests
+- Handles edge cases without crashes
+- <1% CPU overhead per connection
+- Passes eBPF verifier
+
+**Deliverable:** Fully functional HTTP/1.1 parser in eBPF
+
+---
+
+### 1.5: QUIC/HTTP3 Preliminary Support
+**Duration:** 4-5 days  
+**Status:** ⬜ Not Started
+
+**Goal:** Basic QUIC packet detection and metadata extraction
+
+**Note:** Full QUIC parsing happens in Rust userspace with quiche. eBPF extracts minimal metadata.
+
+**Tasks:**
+- [ ] Research QUIC packet structure
+  - UDP port 443 (typically)
+  - QUIC header format (version, connection ID, packet number)
+- [ ] Implement `quic_detector.bpf.c`
+  - Hook: `kprobe/udp_sendmsg` or socket filter
+  - Detect QUIC packets (header flags)
+  - Extract connection ID (for tracking)
+  - Mark packets for userspace processing
+- [ ] Create QUIC event structure:
+  ```c
+  struct quic_event {
+      u64 timestamp_ns;
+      u32 src_ip;
+      u32 dst_ip;
+      u16 src_port;
+      u16 dst_port;
+      u64 connection_id;
+      u8 packet_type;
+      char payload[512];  // Pass to quiche
+  };
+  ```
+- [ ] Test with QUIC server (nginx-quic or curl --http3)
+
+**Success Criteria:**
+- Detects QUIC traffic on UDP port 443
+- Extracts connection ID correctly
+- Minimal overhead (<1%)
+
+**Deliverable:** QUIC packet detector that forwards to userspace
+
+---
+
+### 1.6: CO-RE (Compile Once, Run Everywhere) Support
+**Duration:** 3-4 days  
+**Status:** ⬜ Not Started
+
+**Goal:** Make eBPF programs portable across kernel versions
+
+**Tasks:**
+- [ ] Convert programs to CO-RE style
+  - [ ] Use `vmlinux.h` instead of kernel headers
+  - [ ] Use `BPF_CORE_READ()` macros for field access
+  - [ ] Add CO-RE relocations with `__builtin_preserve_access_index`
+- [ ] Update Makefile for CO-RE compilation
+  ```makefile
+  clang -g -O2 -target bpf -D__TARGET_ARCH_x86 \
+        -D__BPF_TRACING__ \
+        -c http_parser.bpf.c -o http_parser.bpf.o
+  ```
+- [ ] Test on multiple kernel versions:
+  - [ ] Kernel 5.10 (LTS)
+  - [ ] Kernel 5.15 (LTS)
+  - [ ] Kernel 6.1+ (latest LTS)
+
+**Success Criteria:**
+- Single compiled object works on 3+ kernel versions
+- No runtime recompilation needed
+
+**Deliverable:** CO-RE-enabled eBPF programs
+
+---
+
+### 1.7: Performance Benchmarking
+**Duration:** 2-3 days  
+**Status:** ⬜ Not Started
+
+**Tasks:**
+- [ ] Set up benchmark environment (nginx)
+- [ ] Baseline without eBPF: `wrk -t4 -c100 -d30s http://localhost`
+- [ ] Measure with eBPF attached
+- [ ] Profile with `perf` and `bpftool prog profile`
+- [ ] Optimize hot paths
+- [ ] Target: <1% CPU overhead, <100ns per request
+
+**Deliverable:** Performance report and optimizations
+
+---
+
+### Phase 1 Completion Checklist
+
+- [ ] eBPF programs compile successfully with CO-RE
+- [ ] Can hook into TCP/socket layer
+- [ ] HTTP/1.1 requests and responses parsed correctly
+- [ ] QUIC packets detected and forwarded
+- [ ] CO-RE support verified on 3+ kernels
+- [ ] Performance overhead <1%
+- [ ] Code documented and clean
+- [ ] eBPF verifier accepts all programs
+
+**Next:** Move to Phase 2 (Rust Agent + quiche)
+
+---
+
+## Phase 2: Rust Agent Development + quiche Integration
+
+**Duration:** Week 4-6 (3 weeks)  
+**Goal:** Build Rust userspace agent that loads eBPF programs and processes events with quiche
+
+### 2.1: Rust Agent Scaffolding
+**Duration:** 2-3 days
+
+**Tasks:**
+- [ ] Create `axon-agent` crate
+  ```bash
+  cargo new --bin axon-agent
+  cd axon-agent
+  ```
+- [ ] Add dependencies to `Cargo.toml`:
+  ```toml
+  [dependencies]
+  aya = "0.12"              # or libbpf-rs = "0.22"
+  tokio = { version = "1", features = ["full"] }
+  quiche = "0.20"
+  kube = { version = "0.87", features = ["runtime", "derive"] }
+  k8s-openapi = { version = "0.20", features = ["v1_28"] }
+  prometheus = "0.13"
+  tracing = "0.1"
+  tracing-subscriber = "0.3"
+  anyhow = "1.0"
+  thiserror = "1.0"
+  ```
+- [ ] Set up project structure:
+  ```
+  axon-agent/
+  ├── src/
+  │   ├── main.rs
+  │   ├── ebpf/           # eBPF loading
+  │   │   └── loader.rs
+  │   ├── quic/           # quiche integration
+  │   │   ├── parser.rs
+  │   │   └── connection.rs
+  │   ├── http/           # HTTP processing
+  │   │   └── processor.rs
+  │   ├── k8s/            # Kubernetes client
+  │   │   └── metadata.rs
+  │   ├── metrics/        # Prometheus
+  │   │   └── exporter.rs
+  │   └── lib.rs
+  └── Cargo.toml
+  ```
+- [ ] Initialize tracing
+- [ ] Basic CLI with `clap`
+
+**Deliverable:** Rust agent skeleton compiles
+
+---
+
+### 2.2: eBPF Program Loading (Aya or libbpf-rs)
+**Duration:** 3-4 days
+
+**Decision:** Choose between Aya (pure Rust) or libbpf-rs (Rust bindings)
+
+**Recommendation:** Start with **libbpf-rs** (more mature, better C interop)
+
+**Tasks:**
+- [ ] Implement eBPF loader in `src/ebpf/loader.rs`
+- [ ] Load compiled .bpf.o files
+- [ ] Attach to hooks (kprobes, socket filters)
+- [ ] Open ring buffers
+- [ ] Poll for events
+- [ ] Graceful shutdown and cleanup
+
+**Example:**
+```rust
+use libbpf_rs::{RingBufferBuilder, MapCore};
+
+pub struct EbpfLoader {
+    _skel: HttpParserSkel<'static>,
+    rb: RingBuffer<'static>,
 }
- Add dependencies in agent/Cargo.toml:
 
-eBPF integration (choose one stack and commit):
-
-aya = "..."
-or
-
-libbpf-rs = "..." and libbpf-sys = "...".
-
-Async runtime:
-
-tokio = { version = "...", features = ["full"] }
-
-HTTP server:
-
-axum or hyper
-
-Prometheus client:
-
-prometheus or prometheus-client
-
-Logging:
-
-tracing
-
-tracing-subscriber
-
-Kubernetes client:
-
-kube = { version = "...", features = ["runtime", "derive"] }
-
-Serialization:
-
-serde, serde_json (for config, debug)
-
- Implement main.rs skeleton:
-
-Argument parsing (using clap or simple env/flags).
-
-Init logging (tracing_subscriber).
-
-Spawn top-level async runtime.
-
-2.2: eBPF Program Loading from Rust
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Implement BPF loader in Rust (using chosen framework):
-
-Load .bpf.o file(s) from ./ebpf directory.
-
-Attach programs to required hooks:
-
-socket_filter
-
-kprobes/tracepoints as needed.
-
- Setup ring buffer / perf buffer read loop:
-
-Register callback for ring buffer events.
-
-Convert raw bytes into HttpEvent instances using std::mem::transmute or safe wrapper.
-
- Handle graceful shutdown:
-
-On SIGINT/SIGTERM:
-
-Stop consuming events.
-
-Detach programs cleanly.
-
-Flush metrics if needed.
-
-Deliverable:
-Rust agent can start, attach eBPF, receive raw HTTP events, and print them to logs.
-
-2.3: Event Processing Pipeline
-Duration: 3–4 days
-Status: ⬜ Not Started
-
-Goal: Build a pipeline that turns raw events into aggregated metrics.
-
-Tasks:
-
- Convert HttpEvent byte arrays (path, host) to Rust Strings (truncate at \0 or use length heuristics).
-
- Derive a “metric key”:
-
-Method
-
-Path (optionally normalized)
-
-Status code
-
-src/dst IPs (later enriched with pod/service).
-
- Implement aggregation layer:
-
-Use concurrent map (e.g., DashMap or sharded Mutex<HashMap<...>>) to store:
-
-Counters: requests_total
-
-Latency histograms (manual or Prometheus histograms).
-
- Optionally correlate request/response pairs:
-
-Keyed by 5-tuple + maybe PID.
-
-On request: store timestamp in an in-memory map.
-
-On response: compute latency = now - stored ts.
-
- Handle backpressure:
-
-Ensure ring buffer consumer is fast enough, or drop events gracefully with counters.
-
-Deliverable:
-Agent maintains in-memory metrics structures updated by eBPF events.
-
-2.4: Kubernetes Metadata Enrichment (in Agent)
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Goal: Map IPs to pods/namespaces/services and enrich metrics.
-
-Tasks:
-
- Use kube crate:
-
-Create an in-cluster client (using service account).
-
-Watch Pod and/or Endpoints objects.
-
- Maintain cache:
-
-Map: IpAddr -> PodMetadata { namespace, name, labels }
-
-Possibly also: Pod -> Service relationships via Endpoints.
-
- Periodically refresh or rely on watch events for updates.
-
- Extend metrics:
-
-Add labels: namespace, pod, app (from labels), maybe service.
-
- Implement fallback for unknown IPs (label them as "unknown").
-
-Deliverable:
-HTTP metrics labeled by Kubernetes identity, not just IPs.
-
-2.5: Prometheus Metrics Endpoint
-Duration: 1–2 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Add HTTP server using axum or hyper in agent:
-
-Listen on 0.0.0.0:9090 (configurable).
-
- Expose /metrics endpoint:
-
-Register Prometheus counters/histograms.
-
-On scrape, serialize metrics in Prometheus text format.
-
- Implement basic metrics:
-
-axon_http_requests_total{method, path, status, namespace, pod, app}
-
-axon_http_request_duration_seconds_bucket{...}
-
-(Optionally) axon_http_request_bytes, axon_http_response_bytes.
-
-Deliverable:
-Prometheus can scrape the agent; Grafana can graph basic HTTP metrics.
-
-Phase 2 Completion Checklist
- Agent loads eBPF programs from Rust.
-
- Events are processed, aggregated, and enriched with K8s metadata.
-
- /metrics endpoint exposes Prometheus-compatible metrics.
-
- Agent runs as a DaemonSet (even if manifests are manual for now).
-
- Tested on kind/Minikube with a sample app.
-
-Next: Move to Phase 3 – Rust Operator & CRDs.
-
-Phase 3: Kubernetes Integration
-Duration: Week 6–7 (2 weeks)
-Goal: Build a Rust operator using kube-rs with CRDs for declarative configuration of Axon.
-
-3.1: Operator Scaffolding (Rust + kube-rs)
-Duration: 1–2 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Create operator crate in workspace:
-
-cargo new operator
- Add dependencies to operator/Cargo.toml:
-
-kube = { version = "...", features = ["runtime", "derive"] }
-
-serde, serde_json, schemars
-
-tokio
-
-tracing, tracing-subscriber
-
- Define CRD Rust structs using kube::CustomResource derive:
-
-HTTPMonitor
-
-L7NetworkPolicy (stub initially)
-
- Generate CRD YAMLs (either via codegen or kube examples).
-
- Create basic operator main.rs:
-
-Initialize logging.
-
-Run controller for HTTPMonitor.
-
-3.2: HTTPMonitor Controller
-Duration: 3–4 days
-Status: ⬜ Not Started
-
-Goal: Use HTTPMonitor CRD to drive Axon agent DaemonSet configuration.
-
-Tasks:
-
- Design HTTPMonitor spec:
-
-spec.namespaces: list of namespaces to monitor.
-
-spec.sampling: sampling rate (0.0–1.0).
-
-spec.metrics: which metric groups to enable.
-
- Implement controller:
-
-Watch HTTPMonitor objects.
-
-Reconcile into:
-
-DaemonSet spec for axon-agent.
-
-ConfigMap or env vars for agent settings (sampling, ports, etc.).
-
- Implement .status updates:
-
-Number of nodes targeted.
-
-Number of ready agents.
-
- Ensure idempotent reconciliation:
-
-Multiple reconciles should converge cleanly.
-
-Handle deletion: clean up DaemonSet + ConfigMaps.
-
-Deliverable:
-Creating/updating an HTTPMonitor CRD configures/deploys the Axon agent DaemonSet automatically.
-
-3.3: Multi-Node Aggregation Strategy
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Goal: Decide how metrics across nodes are viewed.
-
-Tasks:
-
- Choose strategy (likely Prometheus scrapes each node agent):
-
-Each agent exposes metrics with node label.
-
-Cluster-wide aggregation is done by Prometheus + Grafana.
-
- Ensure metrics include:
-
-node
-
-namespace
-
-pod
-
-app
-
-service (if available)
-
- Provide example Prometheus config for scraping:
-
-Scrape all axon-agent pods via Service or PodMonitor.
-
-Deliverable:
-Prometheus can see metrics from all node agents, and dashboards can do cluster-wide views.
-
-Phase 3 Completion Checklist
- Operator deploys successfully into a cluster.
-
- HTTPMonitor CRD is functional and reconciles into DaemonSet + config.
-
- Agents are fully managed by operator (no manual DaemonSet).
-
- Cluster-wide metrics visible through Prometheus + Grafana.
-
-Next: Move to Phase 4 – L7 Policy Enforcement.
-
-Phase 4: Policy Enforcement
-Duration: Week 8–9 (2 weeks)
-Goal: Implement L7 HTTP policies enforced in kernel using eBPF maps, configured via CRDs.
-
-4.1: Policy eBPF Programs & Maps
-Duration: 4–5 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Design BPF map layout for policies:
-
-Key candidates:
-
-Src identity (pod ID / label hash).
-
-Dst identity.
-
-HTTP method.
-
-Path prefix or hash.
-
-Value:
-
-Allow / deny flag.
-
-Optional counters (hits, last hit).
-
- Extend HTTP eBPF program:
-
-On request event:
-
-Compute identity info (from map keyed by IP, populated by userspace or operator).
-
-Look up policy map.
-
-Decide allow/deny.
-
-If deny: drop packet / reset connection early.
-
- Provide safe default:
-
-If no policy → allow traffic (or configurable default).
-
- Expose policy hit/miss counters via events or stats maps.
-
-Deliverable:
-Kernel-level policy decision path for HTTP requests with BPF maps backing.
-
-4.2: L7NetworkPolicy Controller (Rust)
-Duration: 3–4 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Define L7NetworkPolicy CRD spec:
-
-apiVersion: axon.dev/v1alpha1
-kind: L7NetworkPolicy
-spec:
-  podSelector:
-    matchLabels:
-      app: backend
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: frontend
-      httpRules:
-        - method: GET
-          path: /api/users
-        - method: POST
-          path: /api/users
- Implement controller logic:
-
-Convert CRD into an internal policy model (Rust structs).
-
-Map from podSelector → concrete pod identities (pod IPs, label hashes).
-
-Generate entries for BPF policy maps.
-
-Reconcile:
-
-On policy create/update/delete, push changes to agents:
-
-Option A: Use ConfigMap watched by agents.
-
-Option B: Operator calls agent API (HTTP/gRPC).
-
-Agents then program the BPF maps via eBPF API.
-
- Validate:
-
-From allowed pods: requests succeed.
-
-From disallowed pods: requests are blocked at kernel.
-
-Deliverable:
-L7 policies defined as CRDs, translated into BPF map entries, enforced by kernel.
-
-Phase 4 Completion Checklist
- L7NetworkPolicy CRD is functional.
-
- Policies are mapped to BPF maps on each node.
-
- Blocked traffic never hits target app container.
-
- Policy updates apply without restarting agents or operator.
-
-Next: Move to Phase 5 – Metrics & Visualization.
-
-Phase 5: Metrics & Visualization
-Duration: Week 10 (1 week)
-Goal: Ship usable dashboards and basic alerting on top of Axon.
-
-5.1: Enhanced Prometheus Metrics
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Add more detailed metrics in agent:
-
-Latency histograms with decent buckets.
-
-Error rate metrics (4xx/5xx breakdown).
-
-Policy-related metrics:
-
-axon_l7_policy_allowed_total
-
-axon_l7_policy_denied_total
-
- Avoid cardinality explosion:
-
-Path normalization (e.g., /users/:id).
-
-Label whitelisting for K8s labels.
-
-Optional sampling at agent level.
-
- Document recommended Prometheus scrape config.
-
-5.2: Grafana Dashboards
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Create Grafana dashboard JSONs and store under examples/dashboards/:
-
-Cluster overview:
-
-Total RPS, P50/P95/P99 latency.
-
-Error rate (4xx/5xx).
-
-Service-level view:
-
-Per service/per path metrics.
-
-Policy view:
-
-Allowed vs denied requests.
-
-Top denied paths.
-
- Optional: service dependency map visualization using:
-
-Prometheus metrics (source/destination labels).
-
-Or additional metadata logs.
-
-Deliverable:
-Dashboards that make Axon “feel real” and showcase its capabilities.
-
-Phase 5 Completion Checklist
- Grafana dashboards included in repo.
-
- Example Prometheus + Grafana configuration provided.
-
- Basic alerting rules for latency and error spikes documented.
-
-Next: Move to Phase 6 – Production Hardening.
-
-Phase 6: Production Hardening
-Duration: Week 11–12 (2 weeks)
-Goal: Add tests, docs, CI, and make Axon shippable as an alpha/beta.
-
-6.1: Testing Suite
-Duration: 3–4 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Rust unit tests:
-
-Event processing logic.
-
-IP → pod mapping cache.
-
-Policy translation (CRD → internal model).
-
- Integration tests:
-
-Use kind / Minikube in CI (if feasible).
-
-Deploy Axon operator + agents + sample app.
-
-Run test traffic and assert metrics + policies.
-
- Load testing:
-
-Use wrk against sample app with Axon enabled.
-
-Ensure no severe degradation.
-
- Chaos testing:
-
-Node restart.
-
-Agent pod kill/restart.
-
-Operator restart.
-
-Ensure reconciliation restores state.
-
-6.2: Documentation
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Tasks:
-
- Write docs/ content:
-
-architecture.md – high-level design, C + Rust split, data flow.
-
-getting-started.md – quickstart on kind/Minikube.
-
-configuration.md – CRD fields, flags, env vars.
-
-troubleshooting.md – common issues (verifier failures, missing BTF, etc.).
-
- Add inline code comments and docstrings where missing.
-
-6.3: CI/CD Pipeline
-Duration: 2–3 days
-Status: ⬜ Not Started
-
-Tasks:
-
- GitHub Actions:
-
-Lint + test Rust (agent + operator).
-
-Build eBPF objects (clang).
-
-Optionally run basic integration tests.
-
- Container images:
-
-axon-agent image.
-
-axon-operator image.
-
-Push to GitHub Container Registry (or Docker Hub).
-
- Release flow:
-
-Tag-based releases.
-
-Attach manifests (CRDs, DaemonSet, operator Deployment).
-
-Changelog.
-
-Phase 6 Completion Checklist
- Meaningful test coverage for core logic.
-
- Documentation ready for external users to try Axon.
-
- CI builds + pushes images + runs basic tests.
-
- Public release (even if alpha) is possible without manual heroics.
-
-Progress Tracking
-Current Sprint: Phase 1.1 – Environment Setup
-Start Date: [To be filled]
-Target Completion: [To be filled]
-
-Completed Milestones
- Project planning and architecture design
-
- README.md created
-
- EPIC.md created
-
-Next Steps
-Set up development environment (Phase 1.1).
-
-Implement first eBPF program (Phase 1.2).
-
-Start HTTP parsing design (Phase 1.3).
-
-Notes & Learnings
-Use this section as a scratch pad of things you discover and decisions you make.
-
-Week 1
-[Date] – [Learning/Decision]
-
-Week 2
-[Date] – [Learning/Decision]
-
-Week 3
-[Date] – [Learning/Decision]
-
-Week 4+
-[Date] – [Learning/Decision]
-
-Resources
-eBPF Learning:
-
-Cilium BPF and XDP Reference Guide
-
-Andrii Nakryiko’s blog (deep dives on BPF, CO-RE, libbpf)
-
-ebpf.io Documentation and tutorials
-
-libbpf-bootstrap GitHub repo
-
-CO-RE:
-
-Articles on BPF portability and CO-RE
-
-Examples of CO-RE programs in Cilium / libbpf-bootstrap
-
-Rust + eBPF:
-
-aya-rs GitHub repo and examples
-
-libbpf-rs and libbpf-sys examples
-
-Blog posts on integrating Rust with eBPF
-
-Kubernetes Operators in Rust:
-
-kube-rs GitHub repo
-
-kube-rs controller examples
-
-Talks/blogs about Rust operators in production
-
-Last Updated: [Update this when you change the plan]
-
-
-If you want another pass where we **literally** keep your original text and just do surgical find/replace (Go → Rust, Kubebuilder → kube-rs) without touching anything else, say so and I’ll do that too.
-::contentReference[oaicite:0]{index=0}
+impl EbpfLoader {
+    pub fn new() -> Result<Self> {
+        let skel = HttpParserSkel::open()?;
+        let skel = skel.load()?;
+        let skel = skel.attach()?;
+        
+        let mut rb_builder = RingBufferBuilder::new();
+        rb_builder.add(skel.maps().events(), handle_event)?;
+        let rb = rb_builder.build()?;
+        
+        Ok(Self { _skel: skel, rb })
+    }
+    
+    pub fn poll(&self) -> Result<()> {
+        self.rb.poll(std::time::Duration::from_millis(100))
+    }
+}
+```
+
+**Deliverable:** Rust agent successfully loads eBPF programs
+
+---
+
+### 2.3: Ring Buffer Event Processing
+**Duration:** 2-3 days
+
+**Tasks:**
+- [ ] Parse events from ring buffer
+- [ ] Deserialize C structs to Rust structs
+  ```rust
+  #[repr(C)]
+  struct HttpEvent {
+      timestamp_ns: u64,
+      pid: u32,
+      src_ip: u32,
+      dst_ip: u32,
+      src_port: u16,
+      dst_port: u16,
+      method: u8,
+      status_code: u16,
+      latency_ns: u32,
+      path: [u8; 128],
+      host: [u8; 64],
+  }
+  ```
+- [ ] Convert to Rust-native types
+- [ ] Correlate requests with responses (by connection tuple)
+- [ ] Calculate additional metrics
+- [ ] Buffer and batch events for efficiency
+
+**Deliverable:** Event processing pipeline
+
+---
+
+### 2.4: quiche Integration for QUIC/HTTP3
+**Duration:** 5-7 days
+
+**Goal:** Parse QUIC packets using Cloudflare's quiche library
+
+**Tasks:**
+- [ ] Set up quiche in `src/quic/`
+- [ ] Receive QUIC events from eBPF
+- [ ] Parse QUIC packets with quiche:
+  ```rust
+  use quiche;
+  
+  pub struct QuicHandler {
+      config: quiche::Config,
+      connections: HashMap<u64, quiche::Connection>,
+  }
+  
+  impl QuicHandler {
+      pub fn handle_packet(&mut self, payload: &[u8]) -> Result<()> {
+          // Parse QUIC packet
+          let hdr = quiche::Header::from_slice(payload, quiche::MAX_CONN_ID_LEN)?;
+          
+          // Get or create connection
+          let conn = self.connections.entry(hdr.dcid)
+              .or_insert_with(|| {
+                  quiche::connect(None, &hdr.dcid, &self.config).unwrap()
+              });
+          
+          // Process packet
+          conn.recv(payload)?;
+          
+          // Extract HTTP/3 streams
+          self.process_streams(conn)?;
+          
+          Ok(())
+      }
+      
+      fn process_streams(&self, conn: &mut quiche::Connection) -> Result<()> {
+          // Iterate over readable streams
+          for stream_id in conn.readable() {
+              let mut buf = [0; 65535];
+              let (len, fin) = conn.stream_recv(stream_id, &mut buf)?;
+              
+              // Parse HTTP/3 frames
+              self.parse_http3(&buf[..len])?;
+          }
+          Ok(())
+      }
+  }
+  ```
+- [ ] Extract HTTP/3 requests/responses
+- [ ] Handle QUIC connection migration
+- [ ] Track connection state
+
+**Challenges:**
+- QUIC connections are stateful
+- Need to track connection IDs
+- Handle packet loss and reordering
+
+**Success Criteria:**
+- Can parse HTTP/3 requests over QUIC
+- Tracks connection state correctly
+- <2% CPU overhead
+
+**Deliverable:** Working QUIC/HTTP3 parser with quiche
+
+---
+
+### 2.5: Kubernetes Metadata Enrichment
+**Duration:** 3-4 days
+
+**Tasks:**
+- [ ] Use `kube-rs` to watch pods
+- [ ] Build IP → Pod mapping cache
+  ```rust
+  use kube::{Api, Client};
+  use k8s_openapi::api::core::v1::Pod;
+  
+  pub struct K8sMetadata {
+      client: Client,
+      pod_cache: HashMap<IpAddr, PodInfo>,
+  }
+  
+  impl K8sMetadata {
+      pub async fn watch_pods(&mut self) -> Result<()> {
+          let pods: Api<Pod> = Api::all(self.client.clone());
+          let mut watcher = watcher(pods, Default::default());
+          
+          while let Some(event) = watcher.try_next().await? {
+              match event {
+                  Event::Applied(pod) => self.add_pod(pod),
+                  Event::Deleted(pod) => self.remove_pod(pod),
+                  _ => {}
+              }
+          }
+          Ok(())
+      }
+      
+      pub fn enrich_event(&self, event: &mut HttpEvent) {
+          if let Some(pod) = self.pod_cache.get(&event.src_ip) {
+              event.pod_name = Some(pod.name.clone());
+              event.namespace = Some(pod.namespace.clone());
+              event.labels = Some(pod.labels.clone());
+          }
+      }
+  }
+  ```
+- [ ] Enrich events with:
+  - Pod name
+  - Namespace
+  - Labels (for policy matching)
+  - Service name
+- [ ] Handle pod churn (updates, deletes)
+
+**Deliverable:** K8s metadata enrichment working
+
+---
+
+### 2.6: Prometheus Metrics Export
+**Duration:** 2-3 days
+
+**Tasks:**
+- [ ] Set up Prometheus exporter
+  ```rust
+  use prometheus::{Counter, Histogram, Registry};
+  use warp::Filter;
+  
+  pub struct MetricsExporter {
+      registry: Registry,
+      http_requests_total: Counter,
+      http_request_duration: Histogram,
+  }
+  
+  impl MetricsExporter {
+      pub fn record_request(&self, event: &HttpEvent) {
+          self.http_requests_total
+              .with_label_values(&[&event.method, &event.path, &event.status])
+              .inc();
+          
+          self.http_request_duration
+              .observe(event.latency_ns as f64 / 1_000_000.0);
+      }
+      
+      pub async fn serve_metrics(self) {
+          let metrics_route = warp::path("metrics")
+              .map(move || {
+                  let encoder = prometheus::TextEncoder::new();
+                  let metrics = encoder.encode_to_string(&self.registry.gather()).unwrap();
+                  warp::reply::html(metrics)
+              });
+          
+          warp::serve(metrics_route).run(([0, 0, 0, 0], 9090)).await;
+      }
+  }
+  ```
+- [ ] Export basic metrics:
+  - `http_requests_total{method, path, status, protocol}`
+  - `http_request_duration_seconds{method, path, protocol}`
+  - `http_request_size_bytes{protocol}`
+  - `quic_connections_active`
+  - `quic_migrations_total`
+
+**Deliverable:** Metrics endpoint at `:9090/metrics`
+
+---
+
+### Phase 2 Completion Checklist
+
+- [ ] Rust agent loads eBPF programs
+- [ ] Events processed from ring buffers
+- [ ] quiche integration working for QUIC/HTTP3
+- [ ] K8s metadata enrichment functional
+- [ ] Prometheus metrics exported
+- [ ] No memory leaks (checked with valgrind)
+- [ ] Agent runs as DaemonSet (tested in Kind)
+
+**Next:** Move to Phase 3 (Kubernetes Integration)
+
+---
+
+## Phase 3: Kubernetes Integration (kube-rs)
+
+**Duration:** Week 7-8 (2 weeks)  
+**Goal:** Build Rust operator with CRDs for declarative configuration
+
+### 3.1: Operator Scaffolding
+**Duration:** 2-3 days
+
+**Tasks:**
+- [ ] Create `axon-operator` crate
+- [ ] Add dependencies:
+  ```toml
+  [dependencies]
+  kube = { version = "0.87", features = ["runtime", "derive", "client"] }
+  k8s-openapi = { version = "0.20", features = ["v1_28"] }
+  tokio = { version = "1", features = ["full"] }
+  serde = { version = "1.0", features = ["derive"] }
+  serde_json = "1.0"
+  tracing = "0.1"
+  futures = "0.3"
+  ```
+- [ ] Set up CRD definitions using `kube::CustomResource`
+
+---
+
+### 3.2: HTTPMonitor CRD
+**Duration:** 2-3 days
+
+**Tasks:**
+- [ ] Define HTTPMonitor CRD:
+  ```rust
+  use kube::CustomResource;
+  use schemars::JsonSchema;
+  use serde::{Deserialize, Serialize};
+  
+  #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
+  #[kube(
+      group = "axon.dev",
+      version = "v1alpha1",
+      kind = "HTTPMonitor",
+      namespaced
+  )]
+  pub struct HTTPMonitorSpec {
+      pub namespaces: Vec<String>,
+      pub protocols: Vec<Protocol>,
+      pub sampling: f32,
+      pub metrics: Vec<String>,
+  }
+  
+  #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+  pub enum Protocol {
+      Http1,
+      Http2,
+      Quic,
+  }
+  ```
+- [ ] Generate CRD YAML: `cargo run --bin crd-gen`
+- [ ] Apply to cluster: `kubectl apply -f crds/httpmonitor.yaml`
+
+---
+
+### 3.3: HTTPMonitor Controller
+**Duration:** 4-5 days
+
+**Tasks:**
+- [ ] Implement controller with reconciliation loop
+  ```rust
+  use kube::runtime::controller::{Action, Controller};
+  
+  async fn reconcile(monitor: Arc<HTTPMonitor>, ctx: Arc<Context>) -> Result<Action> {
+      // Generate DaemonSet spec from HTTPMonitor
+      let daemonset = generate_daemonset(&monitor)?;
+      
+      // Apply DaemonSet to cluster
+      let ds_api: Api<DaemonSet> = Api::namespaced(ctx.client.clone(), &monitor.namespace());
+      ds_api.patch(&daemonset.name, &PatchParams::apply("axon"), &Patch::Apply(&daemonset)).await?;
+      
+      // Update status
+      update_status(&monitor, ctx).await?;
+      
+      Ok(Action::requeue(Duration::from_secs(300)))
+  }
+  ```
+- [ ] Watch HTTPMonitor resources
+- [ ] Generate agent DaemonSet configuration
+- [ ] Deploy/update agent DaemonSet
+- [ ] Update CR status
+
+**Deliverable:** HTTPMonitor CRD and controller
+
+---
+
+### 3.4: L7NetworkPolicy CRD (Stub)
+**Duration:** 1-2 days
+
+**Tasks:**
+- [ ] Define L7NetworkPolicy CRD structure
+- [ ] Basic controller scaffolding (full implementation in Phase 4)
+
+---
+
+### Phase 3 Completion Checklist
+
+- [ ] Operator deploys to cluster
+- [ ] HTTPMonitor CRD functional
+- [ ] Controller watches and reconciles resources
+- [ ] Agent DaemonSet deployed via operator
+- [ ] Status updates working
+
+**Next:** Move to Phase 4 (Policy Enforcement)
+
+---
+
+## Phase 4: Policy Enforcement
+
+**Duration:** Week 9-10 (2 weeks)  
+**Goal:** Implement L7 network policies enforced in eBPF
+
+### 4.1: Policy eBPF Programs
+**Duration:** 5-6 days
+
+**Tasks:**
+- [ ] Write `policy_engine.bpf.c`
+- [ ] Use BPF hash maps for policy rules
+- [ ] Match requests against policies
+- [ ] Block/allow based on rules
+- [ ] Return verdict to kernel
+
+---
+
+### 4.2: L7NetworkPolicy Controller
+**Duration:** 4-5 days
+
+**Tasks:**
+- [ ] Implement full L7NetworkPolicy controller
+- [ ] Compile policies into BPF map entries
+- [ ] Update eBPF maps dynamically (from Rust)
+- [ ] Test policy enforcement
+
+---
+
+### Phase 4 Completion Checklist
+
+- [ ] L7 policies enforceable via CRDs
+- [ ] Policies enforced in kernel
+- [ ] Blocked requests don't reach app
+- [ ] Dynamic policy updates work
+
+---
+
+## Phase 5: Metrics & Visualization
+
+**Duration:** Week 11 (1 week)  
+**Goal:** Production-quality dashboards
+
+### 5.1: Enhanced Metrics
+**Duration:** 2-3 days
+
+**Tasks:**
+- [ ] Add histograms for latency percentiles
+- [ ] Service-level aggregations
+- [ ] Cardinality limiting
+
+---
+
+### 5.2: Grafana Dashboards
+**Duration:** 2-3 days
+
+**Tasks:**
+- [ ] Create dashboard JSON templates
+- [ ] HTTP/QUIC overview panels
+- [ ] Service map (optional)
+
+---
+
+## Phase 6: Production Hardening
+
+**Duration:** Week 12-14 (2-3 weeks)
+
+### 6.1: Testing
+**Duration:** 4-5 days
+
+**Tasks:**
+- [ ] Unit tests with `cargo test`
+- [ ] Integration tests in Kind
+- [ ] Load testing (wrk)
+- [ ] Memory leak checks (valgrind, miri)
+
+---
+
+### 6.2: Documentation
+**Duration:** 3-4 days
+
+**Tasks:**
+- [ ] Installation guide
+- [ ] Configuration reference
+- [ ] Troubleshooting
+- [ ] Architecture doc
+
+---
+
+### 6.3: CI/CD
+**Duration:** 3-4 days
+
+**Tasks:**
+- [ ] GitHub Actions for Rust
+- [ ] Cross-compilation for eBPF
+- [ ] Container builds
+- [ ] Release automation
+
+---
+
+## Progress Tracking
+
+### Current Sprint: Phase 1.1 - Environment Setup
+**Start Date:** [To be filled]  
+**Target Completion:** [To be filled]
+
+### Completed Milestones
+- [x] Project planning and architecture design
+- [x] README.md created (Rust edition)
+- [x] EPIC.md created (Rust edition)
+
+### Next Steps
+1. Set up Rust + C development environment (Phase 1.1)
+2. Write first eBPF program (Phase 1.2)
+3. Begin HTTP parsing (Phase 1.4)
+
+---
+
+## Resources
+
+**Rust + eBPF:**
+- [Aya Book](https://aya-rs.dev/book/)
+- [libbpf-rs Documentation](https://github.com/libbpf/libbpf-rs)
+- [Rust for Linux](https://rust-for-linux.com/)
+
+**quiche:**
+- [quiche Documentation](https://docs.rs/quiche/)
+- [Cloudflare Blog on QUIC](https://blog.cloudflare.com/tag/quic/)
+
+**eBPF:**
+- [BPF and XDP Reference](https://docs.cilium.io/en/stable/bpf/)
+- [Andrii Nakryiko's Blog](https://nakryiko.com/)
+- [eBPF.io](https://ebpf.io/)
+
+**Kubernetes Operators (Rust):**
+- [kube-rs Documentation](https://kube.rs/)
+- [kube-rs Examples](https://github.com/kube-rs/kube/tree/main/examples)
+
+---
+
+**Last Updated:** [Auto-update as you progress]
