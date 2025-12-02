@@ -1,4 +1,26 @@
-# Axon Project .gitignore
+# Axon Project .gitignore (Rust + C Edition)
+
+# ===========================
+# Rust Build Artifacts
+# ===========================
+# Compiled files
+**/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock (keep for binaries, ignore for libraries)
+# Uncomment if this is a library
+# Cargo.lock
+
+# Cargo build artifacts
+.cargo/
+**/*.orig
+
+# rustfmt backup files
+**/*.rs.bk
+
+# IDE files from rust-analyzer
+rust-project.json
 
 # ===========================
 # eBPF Build Artifacts
@@ -20,60 +42,10 @@ vmlinux.h
 # libbpf build artifacts
 /ebpf/libbpf/
 /ebpf/.output/
+/ebpf/target/
 
-# ===========================
-# Go Build Artifacts
-# ===========================
-# Binaries
-/bin/
-/dist/
-axon-agent
-axon-operator
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool
-*.out
-coverage.txt
-coverage.html
-
-# Go workspace file
-go.work
-
-# Dependency directories
-vendor/
-
-# Go build cache
-.cache/
-
-# ===========================
-# Kubernetes / Operator
-# ===========================
-# Kubebuilder/Operator SDK
-/bin/
-/testbin/
-/cover.out
-
-# Generated CRD manifests
-config/crd/bases/*.yaml.bak
-
-# kustomize build outputs
-/config/default/kustomization.yaml.bak
-
-# Helm charts (if applicable)
-*.tgz
-charts/*/charts/
-
-# Kubernetes configs with secrets
-*-secret.yaml
-*-secrets.yaml
-kubeconfig*.yaml
+# bpf-linker outputs
+*.bpf.elf
 
 # ===========================
 # C/C++ Build Artifacts
@@ -114,6 +86,20 @@ Mkfile.old
 dkms.conf
 
 # ===========================
+# Binary Outputs
+# ===========================
+/bin/
+/dist/
+/target/
+axon-agent
+axon-operator
+*.exe
+*.exe~
+
+# Test binaries
+*.test
+
+# ===========================
 # IDE and Editor Files
 # ===========================
 # VSCode
@@ -121,7 +107,7 @@ dkms.conf
 *.code-workspace
 .history/
 
-# GoLand / IntelliJ
+# RustRover / IntelliJ IDEA
 .idea/
 *.iml
 *.iws
@@ -147,6 +133,9 @@ tramp
 # Sublime Text
 *.sublime-project
 *.sublime-workspace
+
+# Helix
+.helix/
 
 # ===========================
 # Operating System Files
@@ -196,6 +185,24 @@ $RECYCLE.BIN/
 *.tar.gz
 
 # ===========================
+# Kubernetes
+# ===========================
+# Kubernetes configs with secrets
+*-secret.yaml
+*-secrets.yaml
+kubeconfig*.yaml
+
+# Helm charts (if applicable)
+*.tgz
+charts/*/charts/
+
+# kustomize build outputs
+/config/default/kustomization.yaml.bak
+
+# Generated CRD manifests (keep versioned, but backup)
+config/crd/bases/*.yaml.bak
+
+# ===========================
 # Development & Testing
 # ===========================
 # Local environment files
@@ -207,6 +214,13 @@ $RECYCLE.BIN/
 # Test data
 /testdata/generated/
 /test-results/
+
+# Coverage reports
+*.profraw
+*.profdata
+coverage/
+lcov.info
+cobertura.xml
 
 # Temporary files
 tmp/
@@ -220,9 +234,17 @@ temp/
 *.prof
 *.pprof
 *.trace
+flamegraph.svg
+perf.data
+perf.data.old
 
 # Benchmark results
 benchmark-*.txt
+criterion/
+
+# Fuzzing artifacts
+fuzz/artifacts/
+fuzz/corpus/
 
 # ===========================
 # Build Directories
@@ -235,8 +257,8 @@ benchmark-*.txt
 # ===========================
 # Package Manager Files
 # ===========================
-# Go modules cache
-/go.sum.bak
+# Rust
+Cargo.lock.bak
 
 # NPM (if you have any web UI)
 node_modules/
@@ -252,6 +274,10 @@ yarn.lock
 # Generated documentation
 /docs/_build/
 /site/
+/target/doc/
+
+# mdbook outputs
+book/
 
 # ===========================
 # CI/CD
@@ -274,15 +300,6 @@ secrets*.yaml
 token*.txt
 
 # ===========================
-# Performance & Profiling
-# ===========================
-*.perf
-*.svg
-flamegraph*.svg
-perf.data
-perf.data.old
-
-# ===========================
 # Misc
 # ===========================
 # Core dumps
@@ -300,3 +317,15 @@ core.*
 *.bak
 *.backup
 *.old
+
+# Python (if using Python for scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+ENV/
+
+# macOS specific
+.DS_Store
