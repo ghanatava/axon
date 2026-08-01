@@ -1,299 +1,115 @@
-# Axon
+# axon
 
-**Kernel-space HTTP/QUIC observability for Kubernetes without instrumentation**
+**Zero-instrumentation gRPC tracing for Go services, including TLS — via eBPF.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust Version](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org/)
-[![eBPF](https://img.shields.io/badge/eBPF-Powered-orange)](https://ebpf.io/)
+axon attaches to a running Go binary with no code changes, no sidecar, and no
+service mesh, and reconstructs gRPC request/response pairs — even when the
+traffic is encrypted with `crypto/tls`. It works by hooking Go's TLS
+read/write functions directly in the process's memory, before encryption
+happens (on write) and after decryption happens (on read), then
+demultiplexing the resulting HTTP/2 byte stream back into gRPC calls.
 
-## What is Axon?
+## Why this exists
 
-Axon is an eBPF-powered L7 network observability and policy enforcement platform for Kubernetes built with Rust and C. It provides zero-instrumentation HTTP/QUIC monitoring and identity-aware network policies enforced directly in the Linux kernel.
+Most eBPF-based L7 tracers (Pixie, Cilium/Hubble, Datadog's agent) get
+TLS-transparent HTTP visibility by hooking `SSL_write`/`SSL_read` in OpenSSL.
+That approach is blind to Go services, because Go's `crypto/tls` is a pure-Go
+TLS implementation — it never calls OpenSSL. A large fraction of
+cloud-native infra (most of Kubernetes itself, most CNCF projects, a huge
+share of internal microservices) is written in Go. axon exists to close that
+specific, well-known blind spot.
 
-Unlike traditional monitoring solutions that require sidecars, service mesh proxies, or application instrumentation, Axon operates at the kernel level using eBPF technology - giving you complete visibility with near-zero overhead.
+See [EPIC.md](./EPIC.md) for the full implementation plan, the hard
+technical problems this project is built around, and a running log of
+what's been learned.
 
-## Why Axon?
+## Scope
 
-**The Problem:**
-- Traditional observability requires instrumentation (code changes)
-- Service meshes add latency and complexity (sidecar proxies)
-- Network policies are IP-based, not identity-aware
-- HTTP/3 and QUIC adoption requires new monitoring approaches
-- Debugging microservice latency is painful without L7 visibility
+**In scope:**
+- gRPC-over-HTTP/2 tracing for Go services
+- TLS transparency via `crypto/tls` uprobes (no OpenSSL dependency)
+- Correct behavior across Go's stack-copying goroutine model
+- Kubernetes deployment as a DaemonSet, Prometheus metrics output
 
-**The Axon Solution:**
-- ✅ Zero application changes - works with any HTTP/QUIC service
-- ✅ Sub-millisecond overhead using eBPF
-- ✅ L7-aware network policies (e.g., "only allow GET /api/users")
-- ✅ Real-time HTTP/1.1, HTTP/2, and HTTP/3 (QUIC) metrics
-- ✅ Service dependency mapping from actual traffic
-- ✅ Memory-safe Rust userspace (no leaks, no unsafe pitfalls)
-- ✅ Kubernetes-native with custom CRDs
+**Explicitly out of scope (for now):**
+- Non-Go runtimes (no Node/Python/Java support)
+- Plain HTTP/1.1 (HTTP/2 demux is the hard problem worth solving; HTTP/1.1
+  parsing is comparatively trivial and not the point of this project)
+- HTTP/3 / QUIC (interesting follow-on, deliberately deferred)
+- Network policy enforcement / packet dropping (a different project)
+- A "complete network suite" — axon does one thing
 
-## Key Features
+## Why it's hard
 
-### 🔍 Zero-Instrumentation Observability
-- HTTP/1.1, HTTP/2, and HTTP/3 (QUIC) request/response tracking
-- Per-endpoint latency metrics (P50, P95, P99)
-- Status code distribution and error rates
-- Payload size and throughput monitoring
-- QUIC connection migration tracking
-- No code changes or agent injection required
-
-### 🛡️ L7 Network Policy Enforcement
-- Identity-aware policies based on K8s labels
-- HTTP method and path filtering
-- QUIC stream-level policies
-- Block malicious requests before they reach the application
-- Policy enforcement in kernel space (faster than iptables)
-
-### 📊 Service Dependency Graph
-- Automatic discovery of service-to-service communication
-- Real-time topology visualization
-- Endpoint-level dependency tracking
-- Protocol-aware (HTTP/1.1, HTTP/2, HTTP/3)
-- Integration with Prometheus and Grafana
-
-### ⚡ Performance
-- <1% CPU overhead per node
-- Sub-microsecond latency impact
-- Memory-safe Rust prevents leaks and crashes
-- CO-RE (Compile Once, Run Everywhere) eBPF programs
-- Efficient ring buffer for kernel-to-userspace communication
+1. **Go doesn't call OpenSSL.** The uprobe target has to be
+   `crypto/tls.(*Conn).Write` / `.Read` inside the Go binary itself, resolved
+   from that binary's own symbol table — there's no shared library to hook.
+2. **uretprobes corrupt Go binaries.** Go copies and moves goroutine stacks
+   at runtime; a uretprobe's return-address patch can be invalidated or land
+   in the wrong place. Returns have to be caught by disassembling the target
+   function and placing a uprobe on every `RET` instruction instead.
+3. **Go's calling convention is version- and register-dependent.** Go 1.17+
+   uses a register-based ABI (ABIInternal); earlier versions pass arguments
+   on the stack. Goroutines also migrate between OS threads mid-call, so
+   `pid`/`tid` isn't a valid correlation key — the goroutine ID has to be
+   read from the `g` struct via the `r14` register.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Axon Operator (Rust)                      │
-│  • Watches HTTPMonitor & L7NetworkPolicy CRDs               │
-│  • Manages DaemonSet lifecycle                              │
-│  • Aggregates metrics across cluster                        │
-└─────────────────────────────────────────────────────────────┘
-                            │
-              ┌─────────────┴─────────────┐
-              ▼                           ▼
-    ┌──────────────────┐        ┌──────────────────┐
-    │   Node Agent     │        │   Node Agent     │
-    │   (Rust)         │        │   (Rust)         │
-    │                  │        │                  │
-    │ ┌──────────────┐ │        │ ┌──────────────┐ │
-    │ │ eBPF Programs│ │        │ │ eBPF Programs│ │
-    │ │    (C)       │ │        │ │    (C)       │ │
-    │ │              │ │        │ │              │ │
-    │ │ • socket_filter│        │ │ • socket_filter│
-    │ │ • http_parser│ │        │ │ • http_parser│ │
-    │ │ • quic_parser│ │        │ │ • quic_parser│ │
-    │ │ • policy_enforce│        │ │ • policy_enforce│
-    │ └──────────────┘ │        │ └──────────────┘ │
-    │                  │        │                  │
-    │  Ring Buffer ↕   │        │  Ring Buffer ↕   │
-    │                  │        │                  │
-    │  Rust Userspace  │        │  Rust Userspace  │
-    │  • quiche (QUIC) │        │  • quiche (QUIC) │
-    │  • K8s metadata  │        │  • K8s metadata  │
-    │  • Prometheus    │        │  • Prometheus    │
-    └──────────────────┘        └──────────────────┘
-              │                           │
-              └───────────┬───────────────┘
-                          ▼
-                  ┌───────────────┐
-                  │  Prometheus   │
-                  │   + Grafana   │
-                  └───────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                      Target Go Process                   │
+│                                                            │
+│   crypto/tls.(*Conn).Write() ──┐                          │
+│   crypto/tls.(*Conn).Read()  ──┤── uprobes (per RET site) │
+└─────────────────────────────────┼─────────────────────────┘
+                                   │ plaintext bytes + goroutine id
+                                   ▼
+                        ┌─────────────────────┐
+                        │   eBPF programs      │
+                        │  (C, libbpf, CO-RE)  │
+                        └──────────┬────────────┘
+                                   │ ring buffer
+                                   ▼
+                        ┌─────────────────────┐
+                        │   axon-agent (Go)    │
+                        │  HTTP/2 frame demux  │
+                        │  HPACK decode        │
+                        │  stream correlation  │
+                        │  gRPC method extract │
+                        └──────────┬────────────┘
+                                   │
+                                   ▼
+                     Prometheus metrics · Grafana dashboards
 ```
 
-## Tech Stack
+## Tech stack
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **eBPF Programs** | C + libbpf + CO-RE | Kernel-space HTTP/QUIC parsing and policy enforcement |
-| **Agent** | Rust + Aya/libbpf-rs | Memory-safe userspace processing |
-| **QUIC/HTTP3** | quiche (Cloudflare) | QUIC protocol parsing and handling |
-| **Operator** | Rust + kube-rs | CRD management and cluster orchestration |
-| **Metrics** | Prometheus | Time-series metrics storage |
-| **Visualization** | Grafana | Dashboards and service maps |
-| **CI/CD** | GitHub Actions | Automated builds and testing |
+- **eBPF programs:** C, libbpf, CO-RE (`vmlinux.h`, BTF relocations)
+- **Agent:** Go — ring buffer consumer, HTTP/2/HPACK/gRPC demux, ELF symbol
+  resolution for uprobe placement
+- **Kubernetes packaging:** DaemonSet, Prometheus metrics endpoint, Grafana
+  dashboard
+- **Test targets:** small Go gRPC client/server pair, built across a matrix
+  of Go versions to exercise the ABI differences
 
-### Why Rust + C?
-
-**Polyglot Approach Benefits:**
-- **C for eBPF**: Mature tooling, kernel-verified, libbpf ecosystem
-- **Rust for Userspace**: Memory safety, no leaks, modern concurrency
-- **Best of Both Worlds**: Performance + Safety
-- **quiche Integration**: Native Rust QUIC/HTTP3 support from Cloudflare
-
-**Memory Safety Matters:**
-- C eBPF programs are kernel-verified (safe by design)
-- Rust userspace prevents common bugs: use-after-free, data races, memory leaks
-- Production-grade reliability without GC overhead
-
-## Quick Start
-
-> **Note:** Axon is currently in active development. See [EPIC.md](EPIC.md) for the implementation timeline.
-
-### Prerequisites
-- Kubernetes cluster (1.24+)
-- Linux kernel 5.10+ with BTF support
-- kubectl configured
-
-### Installation (Coming Soon)
-
-```bash
-# Install Axon operator
-kubectl apply -f https://github.com/yourname/axon/releases/latest/axon-operator.yaml
-
-# Create an HTTP monitor
-kubectl apply -f - <<EOF
-apiVersion: axon.dev/v1alpha1
-kind: HTTPMonitor
-metadata:
-  name: production-monitor
-  namespace: default
-spec:
-  namespaces: ["default", "production"]
-  protocols: ["http1", "http2", "quic"]
-  sampling: 1.0  # 100% for now
-  metrics:
-    - requestLatency
-    - statusCodes
-    - throughput
-    - quicMigrations
-EOF
-
-# View metrics in Grafana
-kubectl port-forward -n axon-system svc/grafana 3000:3000
-```
-
-### Example: L7 Network Policy
-
-```yaml
-apiVersion: axon.dev/v1alpha1
-kind: L7NetworkPolicy
-metadata:
-  name: backend-api-policy
-spec:
-  podSelector:
-    matchLabels:
-      app: backend
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: frontend
-      httpRules:
-        - method: GET
-          path: /api/users
-          protocols: ["http1", "http2", "quic"]
-        - method: POST
-          path: /api/users
-          protocols: ["http1", "http2"]
-    - from:
-        - podSelector:
-            matchLabels:
-              app: admin
-      httpRules:
-        - method: "*"
-          path: /api/*
-          protocols: ["http1", "http2", "quic"]
-```
-
-## Development
-
-See [EPIC.md](EPIC.md) for the detailed development roadmap and current progress.
-
-### Development Environment Setup
-
-```bash
-# Clone repository
-git clone https://github.com/yourname/axon
-cd axon
-
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup default stable
-
-# Install C/eBPF dependencies (Ubuntu/Debian)
-sudo apt-get update
-sudo apt-get install -y \
-    clang llvm libbpf-dev linux-headers-$(uname -r) \
-    make gcc pkg-config libssl-dev
-
-# Install cargo-bpf (optional, if using Aya)
-cargo install bpf-linker
-
-# Build eBPF programs
-make build-ebpf
-
-# Build Rust agent
-cargo build --release
-
-# Run tests
-cargo test
-```
-
-## Roadmap
-
-- [x] Project planning and architecture design
-- [ ] **Phase 1: Core eBPF** - HTTP/QUIC parsing and tracking
-- [ ] **Phase 2: Rust Agent** - Userspace processing with quiche
-- [ ] **Phase 3: Kubernetes Integration** - Operator with kube-rs
-- [ ] **Phase 4: Policy Enforcement** - L7 network policies
-- [ ] **Phase 5: Metrics & Visualization** - Prometheus + Grafana
-- [ ] **Phase 6: Production Hardening** - Testing and optimization
-
-See [EPIC.md](EPIC.md) for detailed milestones and tasks.
-
-## Project Structure
+## Repo layout (planned)
 
 ```
 axon/
-├── ebpf/                  # C eBPF programs
-│   ├── http_parser.bpf.c
-│   ├── quic_parser.bpf.c
-│   └── policy_engine.bpf.c
-├── axon-agent/            # Rust agent (DaemonSet)
-│   ├── src/
-│   │   ├── ebpf/         # eBPF loading
-│   │   ├── quic/         # quiche integration
-│   │   ├── k8s/          # Kubernetes client
-│   │   └── metrics/      # Prometheus
-│   └── Cargo.toml
-├── axon-operator/         # Rust operator
-│   ├── src/
-│   │   ├── controllers/
-│   │   └── crds/
-│   └── Cargo.toml
-├── examples/              # Sample configs
-├── docs/                  # Documentation
-├── Makefile
-└── Cargo.toml            # Workspace
+├── bpf/            # eBPF C programs (uprobes, ring buffer)
+├── cmd/agent/       # Go agent entrypoint
+├── internal/
+│   ├── symbols/     # ELF parsing, RET-site disassembly, symbol resolution
+│   ├── h2demux/      # HTTP/2 frame parsing + HPACK
+│   ├── grpc/          # gRPC method/stream correlation
+│   └── metrics/        # Prometheus exporters
+├── deploy/          # DaemonSet manifests, RBAC
+├── testtargets/     # Go gRPC client/server fixtures per Go version
+├── EPIC.md
+└── README.md
 ```
 
-## Contributing
+## Status
 
-Contributions are welcome! This is currently a learning project, but feel free to:
-- Open issues for bugs or feature requests
-- Submit PRs for improvements
-- Share feedback on architecture decisions
-
-## Inspiration
-
-Axon is inspired by production-grade projects like:
-- [Cilium](https://cilium.io/) - eBPF-based networking and security
-- [Hubble](https://github.com/cilium/hubble) - Network observability
-- [quiche](https://github.com/cloudflare/quiche) - Cloudflare's QUIC implementation
-- [Aya](https://aya-rs.dev/) - Rust eBPF library
-- [Pixie](https://px.dev/) - Kubernetes observability with eBPF
-
-## License
-
-MIT License - See [LICENSE](LICENSE) file for details
-
-## Contact
-
-Built with ❤️ as a learning project to understand eBPF, QUIC, Linux kernel internals, Rust systems programming, and modern observability patterns.
-
----
-
-**⚠️ Development Status:** This project is in active development. Not ready for production use.
+Pre-implementation. See [EPIC.md](./EPIC.md) Phase 0.
