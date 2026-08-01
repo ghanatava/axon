@@ -1,331 +1,67 @@
-# Axon Project .gitignore (Rust + C Edition)
-
-# ===========================
-# Rust Build Artifacts
-# ===========================
-# Compiled files
-**/target/
-**/*.rs.bk
-*.pdb
-
-# Cargo lock (keep for binaries, ignore for libraries)
-# Uncomment if this is a library
-# Cargo.lock
-
-# Cargo build artifacts
-.cargo/
-**/*.orig
-
-# rustfmt backup files
-**/*.rs.bk
-
-# IDE files from rust-analyzer
-rust-project.json
-
-# ===========================
-# eBPF Build Artifacts
-# ===========================
-*.bpf.o
-*.bpf.c.o
-*.ll
-*.bc
-vmlinux.h
-*.skel.h
-*.bpf.h.tmp
-
-# BPF object files
-*.o
-*.ko
-*.obj
-*.elf
-
-# libbpf build artifacts
-/ebpf/libbpf/
-/ebpf/.output/
-/ebpf/target/
-
-# bpf-linker outputs
-*.bpf.elf
-
-# ===========================
-# C/C++ Build Artifacts
-# ===========================
-# Compiled Object files
-*.o
-*.ko
-*.obj
-*.elf
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Compiled Static libraries
-*.la
-*.a
-*.lib
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# ===========================
-# Binary Outputs
-# ===========================
-/bin/
-/dist/
-/target/
-axon-agent
-axon-operator
+# === Go ===
+# Binaries
 *.exe
 *.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/cmd/**/agent
+axon-agent
 
-# Test binaries
+# Test artifacts
 *.test
+*.out
+coverage.txt
+coverage.html
 
-# ===========================
-# IDE and Editor Files
-# ===========================
-# VSCode
+# Go build/mod cache artifacts if vendored locally
+vendor/
+
+# Go workspace files
+go.work
+go.work.sum
+
+# === C / eBPF ===
+# Compiled objects
+*.o
+*.ko
+*.obj
+*.a
+
+# eBPF compiled bytecode objects (keep .bpf.c sources, ignore .bpf.o build output)
+*.bpf.o
+
+# libbpf-generated skeletons (regenerate via bpftool gen skeleton — don't commit generated code)
+*.skel.h
+
+# Generated vmlinux.h (machine/kernel-specific — regenerate per target, don't commit)
+vmlinux.h
+
+# clang/LLVM intermediates
+*.ll
+*.bc
+
+# Preprocessor / dependency files
+*.d
+
+# === Editors / OS ===
 .vscode/
-*.code-workspace
-.history/
-
-# RustRover / IntelliJ IDEA
 .idea/
-*.iml
-*.iws
-*.ipr
-out/
-
-# Vim
 *.swp
 *.swo
 *~
-.netrwhist
-
-# Emacs
-*~
-\#*\#
-/.emacs.desktop
-/.emacs.desktop.lock
-*.elc
-auto-save-list
-tramp
-.\#*
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# Helix
-.helix/
-
-# ===========================
-# Operating System Files
-# ===========================
-# macOS
 .DS_Store
-.AppleDouble
-.LSOverride
-._*
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
 
-# Linux
-*~
-.directory
-.Trash-*
-.nfs*
+# === Build output ===
+/dist/
+/build/
+*.log
 
-# Windows
-Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
-ehthumbs_vista.db
-*.stackdump
-[Dd]esktop.ini
-$RECYCLE.BIN/
-*.cab
-*.msi
-*.msix
-*.msm
-*.msp
-*.lnk
-
-# ===========================
-# Docker / Container
-# ===========================
-# Docker build context
-.dockerignore
-
-# Container images (if building locally)
-*.tar
-*.tar.gz
-
-# ===========================
-# Kubernetes
-# ===========================
-# Kubernetes configs with secrets
-*-secret.yaml
-*-secrets.yaml
-kubeconfig*.yaml
-
-# Helm charts (if applicable)
-*.tgz
-charts/*/charts/
-
-# kustomize build outputs
-/config/default/kustomization.yaml.bak
-
-# Generated CRD manifests (keep versioned, but backup)
-config/crd/bases/*.yaml.bak
-
-# ===========================
-# Development & Testing
-# ===========================
-# Local environment files
+# === Local/test env ===
 .env
-.env.local
-.env.*.local
 *.local
 
-# Test data
-/testdata/generated/
-/test-results/
-
-# Coverage reports
-*.profraw
-*.profdata
-coverage/
-lcov.info
-cobertura.xml
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.temp
-*.log
-*.pid
-
-# Profiling data
-*.prof
-*.pprof
-*.trace
-flamegraph.svg
-perf.data
-perf.data.old
-
-# Benchmark results
-benchmark-*.txt
-criterion/
-
-# Fuzzing artifacts
-fuzz/artifacts/
-fuzz/corpus/
-
-# ===========================
-# Build Directories
-# ===========================
-/build/
-/output/
-/_output/
-/.build/
-
-# ===========================
-# Package Manager Files
-# ===========================
-# Rust
-Cargo.lock.bak
-
-# NPM (if you have any web UI)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-package-lock.json
-yarn.lock
-
-# ===========================
-# Documentation
-# ===========================
-# Generated documentation
-/docs/_build/
-/site/
-/target/doc/
-
-# mdbook outputs
-book/
-
-# ===========================
-# CI/CD
-# ===========================
-# GitHub Actions artifacts (local testing)
-.github/workflows/*.local.yml
-
-# ===========================
-# Secrets & Credentials
-# ===========================
-# Never commit secrets!
-*.pem
-*.key
-*.crt
-*.p12
-*.pfx
-*-key.json
-credentials*.json
-secrets*.yaml
-token*.txt
-
-# ===========================
-# Misc
-# ===========================
-# Core dumps
-core
-core.*
-
-# Archives
-*.zip
-*.tar.gz
-*.tgz
-*.rar
-*.7z
-
-# Backups
-*.bak
-*.backup
-*.old
-
-# Python (if using Python for scripts)
-__pycache__/
-*.py[cod]
-*$py.class
-.Python
-venv/
-.venv/
-ENV/
-
-# macOS specific
-.DS_Store
+# === Kubernetes local artifacts ===
+kubeconfig
+*.kubeconfig
