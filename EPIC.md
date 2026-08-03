@@ -130,12 +130,12 @@ you can show the thing working, not just "the code compiles."
 ### Phase 0 — Environment & toolchain validation
 **Goal:** prove the whole toolchain works end to end before touching any
 hard problem.
-- [ ] Confirm kernel has BTF: `ls /sys/kernel/btf/vmlinux`
-- [ ] Install clang/llvm/libbpf-dev/bpftool
-- [ ] Generate `vmlinux.h` via `bpftool btf dump file /sys/kernel/btf/vmlinux format c`
-- [ ] Write and load a trivial uprobe (any C binary, e.g. glibc's `read`)
+- [ x ] Confirm kernel has BTF: `ls /sys/kernel/btf/vmlinux`
+- [ x ] Install clang/llvm/libbpf-dev/bpftool
+- [ x ] Generate `vmlinux.h` via `bpftool btf dump file /sys/kernel/btf/vmlinux format c`
+- [ x ] Write and load a trivial uprobe (any C binary, e.g. glibc's `read`)
   that just counts calls into a `BPF_MAP_TYPE_ARRAY`
-- [ ] Confirm it fires: read the counter from userspace
+- [ x ] Confirm it fires: read the counter from userspace
 - **Exit:** a uprobe fires on a real process and you can read data back.
 
 ### Phase 1 — Go symbol resolution & RET-site discovery
