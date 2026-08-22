@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: axon
+  namespace: axon
+spec:
+  selector:
+    matchLabels:
+      app: axon
+  template:
+    metadata:
+      labels:
+        app: axon
+    spec:
+      hostPID: true
+      containers:
+        - name: axon-agent
+          image: axon:latest
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - BPF
+                - SYS_ADMIN
+                - NET_ADMIN
+          volumeMounts:
+            - name: sys
+              mountPath: /sys
+              readOnly: true
+            - name: proc
+              mountPath: /proc
+              readOnly: true
+      volumes:
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: proc
+          hostPath:
+            path: /proc
