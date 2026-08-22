@@ -20,9 +20,9 @@ import (
 // is reserved for entry; 1/2/3 for the three RET sites, in the order
 // RetSites() returns them.
 type attachPoint struct {
-	label   string
-	address uint64
-	cookie  uint64
+	label  string
+	offset uint64
+	cookie uint64
 }
 
 func main() {
@@ -36,7 +36,7 @@ func main() {
 	// Reuse Phase 1's proven-correct resolution code directly -- this is
 	// exactly why we tested Resolve/RetSites independently first: we can
 	// now trust these numbers without re-verifying them here.
-	sym, err := symbols.Resolve(binPath, funcName)
+	_, err := symbols.Resolve(binPath, funcName)
 	if err != nil {
 		log.Fatalf("resolving symbol: %v", err)
 	}
@@ -46,13 +46,13 @@ func main() {
 	}
 
 	points := []attachPoint{
-		{label: "entry", address: sym.Address, cookie: 0},
+		{label: "entry", offset: 0, cookie: 0},
 	}
 	for i, off := range rets {
 		points = append(points, attachPoint{
-			label:   fmt.Sprintf("ret-site-%d", i),
-			address: sym.Address + off,
-			cookie:  uint64(i + 1),
+			label:  fmt.Sprintf("ret-site-%d", i),
+			offset: off,
+			cookie: uint64(i + 1),
 		})
 	}
 
@@ -77,15 +77,15 @@ func main() {
 	// answers "which attach point fired" from inside count_site later.
 	var links []link.Link
 	for _, p := range points {
-		up, err := ex.Uprobe("", objs.CountSite, &link.UprobeOptions{
-			Address: p.address,
-			Cookie:  p.cookie,
+		up, err := ex.Uprobe(funcName, objs.CountSite, &link.UprobeOptions{
+			Offset: p.offset,
+			Cookie: p.cookie,
 		})
 		if err != nil {
-			log.Fatalf("attaching uprobe at %s (0x%x): %v", p.label, p.address, err)
+			log.Fatalf("attaching uprobe at %s (offset 0x%x): %v", p.label, p.offset, err)
 		}
 		links = append(links, up)
-		fmt.Printf("attached: %-10s address=0x%x cookie=%d\n", p.label, p.address, p.cookie)
+		fmt.Printf("attached: %-10s offset=0x%x cookie=%d\n", p.label, p.offset, p.cookie)
 	}
 	defer func() {
 		for _, l := range links {

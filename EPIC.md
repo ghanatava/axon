@@ -141,13 +141,13 @@ hard problem.
 ### Phase 1 — Go symbol resolution & RET-site discovery
 **Goal:** given a compiled Go binary, programmatically find the file offset
 to attach a uprobe to for a named function, and find all its `RET` sites.
-- [ ] Build a minimal Go test binary with a function you control
-- [ ] Parse its ELF symbol table to resolve `runtime.newobject` or your own
+- [ x ] Build a minimal Go test binary with a function you control
+- [ x ] Parse its ELF symbol table to resolve `runtime.newobject` or your own
   function's file offset (Go symbols are not stripped by default; note
   what changes if `-ldflags="-s -w"` is used)
-- [ ] Disassemble the function body (objdump or a Go disassembly library)
+- [ x ] Disassemble the function body (objdump or a Go disassembly library)
   and enumerate `RET` instruction offsets
-- [ ] Place a uprobe at entry and at every `RET` site; log each firing with
+- [ x ] Place a uprobe at entry and at every `RET` site; log each firing with
   a tag distinguishing entry vs. which return site
 - **Exit:** entry and every return of a chosen Go function reliably logged,
   including for a function with multiple return statements.
@@ -259,7 +259,7 @@ multiple processes, goroutines migrating threads, connection churn.
 | Phase | Status | Notes |
 |---|---|---|
 | 0 — Environment | Not started | |
-| 1 — Go symbol resolution & RET sites | Not started | |
+| 1 — Go symbol resolution & RET sites | Done | See Notes & learnings below |
 | 2 — TLS interception | Not started | |
 | 3 — HTTP/2 demux | Not started | |
 | 4 — HPACK & gRPC semantics | Not started | |
@@ -273,18 +273,55 @@ multiple processes, goroutines migrating threads, connection churn.
 Log dated entries here as you go — what broke, what the fix was, what you'd
 do differently. This is the raw material for interview stories later.
 
-- _(empty — fill in as Phase 0 starts)_
+### Phase 1 — Go symbol resolution & RET-site uprobe attachment
+
+Built and verified end to end against a real test target (`main.classify`
+in `testtargets/retsites/`, a function with 3 return paths, built with
+`//go:noinline`):
+
+- `internal/symbols.Resolve()` - ELF symbol lookup via `debug/elf`,
+  verified byte-for-byte against `go tool nm` output.
+- `internal/symbols.RetSites()` - disassembles the function body with
+  `golang.org/x/arch/x86/x86asm`, walking instruction-by-instruction
+  (`offset += inst.Len`, never a fixed stride) to find every `RET`
+  opcode. Verified against `objdump -d` - offsets matched exactly.
+- `bpf/retsite_count.bpf.c` - a single BPF program (`SEC("uprobe")`,
+  raw `struct pt_regs *ctx`, no `BPF_UPROBE` macro) attached at 4
+  separate addresses (entry + 3 RET sites) against the same loaded
+  program. Uses `bpf_get_attach_cookie()` to distinguish which
+  attachment point fired, writing counts into an 8-slot
+  `BPF_MAP_TYPE_ARRAY` keyed by cookie.
+- `poc/uprobe-retsites/main.go`  the Go-side loader/attacher.
+
+**Final verified result:** entry fired 7 times; the three RET sites
+fired 2, 2, and 3 times respectively  summing exactly to 7, confirming
+every call took exactly one return path with nothing lost or
+double-counted.
+
+**Two real bugs hit and fixed, worth remembering:**
+
+1. `link.UprobeOptions{Address: <computed absolute address>}` silently
+   attaches without error but never fires. The fix is
+   `link.UprobeOptions{Offset: <function-relative offset>}` paired
+   with the symbol name, which routes through the library's own
+   proven virtual-address resolution instead of raw address math done
+   by hand. All 4 attach points (entry included) now go through this
+   same offset-based path — no special-cased raw-address logic
+   remains anywhere in the loader.
+Also confirmed along the way: `-ldflags="-s -w"` strips the ELF
+symbol table this entire technique depends on  a real, documented
+limitation of axon against binaries built that way, not a bug to fix.
 
 ## Resources
 
-- [Andrii Nakryiko's blog](https://nakryiko.com/) — CO-RE, BTF, libbpf
+- [Andrii Nakryiko's blog](https://nakryiko.com/) - CO-RE, BTF, libbpf
   internals, generally the best primary source for modern eBPF
 - [BPF and XDP Reference Guide (Cilium docs)](https://docs.cilium.io/en/stable/bpf/)
-- [libbpf-bootstrap](https://github.com/libbpf/libbpf-bootstrap) — skeleton
+- [libbpf-bootstrap](https://github.com/libbpf/libbpf-bootstrap) - skeleton
   generation patterns
 - [Go internal ABI spec](https://go.googlesource.com/go/+/refs/heads/master/src/cmd/compile/abi-internal.md)
-  — required reading before Phase 2
-- Pixie's OSS source (`px.dev`) — a real-world reference for uprobe-based
+  - required reading before Phase 2
+- Pixie's OSS source (`px.dev`) - a real-world reference for uprobe-based
   Go/TLS tracing; useful to compare approaches against, not to copy from
 - [HTTP/2 RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html)
 - [HPACK RFC 7541](https://www.rfc-editor.org/rfc/rfc7541.html)
