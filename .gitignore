@@ -6,7 +6,6 @@
 *.so
 *.dylib
 /bin/
-/cmd/**/agent
 axon-agent
 
 # Test artifacts
@@ -44,6 +43,30 @@ vmlinux.h
 
 # Preprocessor / dependency files
 *.d
+
+# === cmd/*, poc/*, testtargets/* build output ===
+# Only hand-written source is tracked in these dirs -- any compiled binary
+# is ignored automatically, whatever it gets named, so this file doesn't
+# need editing every time a new debug/poc binary shows up under a new name.
+# (classify / classify_stripped fall under this too: kept on disk since
+# classify_stripped needs a specific -ldflags="-s -w" build to regenerate
+# correctly, now just properly ignored instead of hardcoded here by name.)
+cmd/*/*
+!cmd/*/*.go
+poc/*/*
+!poc/*/*.go
+!poc/*/*.c
+!poc/*/*.h
+testtargets/*/*
+!testtargets/*/*.go
+
+# bpf2go-generated Go loader + embedded bytecode -- regenerate both via
+# `go generate` before building, don't commit either half. The .go embeds
+# the sibling .o via go:embed, so committing one without the other leaves
+# the repo unbuildable from a fresh clone anyway. Must come after the
+# poc/* whitelist above since it's the more specific, later-wins rule.
+poc/*/*_bpfel.go
+poc/*/*_bpfeb.go
 
 # === Editors / OS ===
 .vscode/
