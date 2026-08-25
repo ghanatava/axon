@@ -1,58 +1,50 @@
 # axon
 
-**Zero-instrumentation gRPC tracing for Go services, including TLS — via eBPF.**
+**Zero-instrumentation gRPC tracing for Go services, including TLS, via eBPF.**
 
-axon attaches to a running Go binary with no code changes, no sidecar, and no
-service mesh, and reconstructs gRPC request/response pairs — even when the
-traffic is encrypted with `crypto/tls`. It works by hooking Go's TLS
-read/write functions directly in the process's memory, before encryption
-happens (on write) and after decryption happens (on read), then
-demultiplexing the resulting HTTP/2 byte stream back into gRPC calls.
+Attaches to a running Go binary, no code changes, no sidecar, no service
+mesh, and reconstructs gRPC request/response pairs even through
+`crypto/tls`. Hooks Go's TLS read/write functions in-process, before
+encryption on write and after decryption on read, then demuxes the
+resulting HTTP/2 byte stream back into gRPC calls.
 
 ## Why this exists
 
-Most eBPF-based L7 tracers (Pixie, Cilium/Hubble, Datadog's agent) get
-TLS-transparent HTTP visibility by hooking `SSL_write`/`SSL_read` in OpenSSL.
-That approach is blind to Go services, because Go's `crypto/tls` is a pure-Go
-TLS implementation — it never calls OpenSSL. A large fraction of
-cloud-native infra (most of Kubernetes itself, most CNCF projects, a huge
-share of internal microservices) is written in Go. axon exists to close that
-specific, well-known blind spot.
+Most eBPF L7 tracers (Pixie, Cilium/Hubble, Datadog) hook
+`SSL_write`/`SSL_read` in OpenSSL. Blind to Go: `crypto/tls` is pure Go,
+never touches OpenSSL. And most of cloud-native infra is written in Go.
+axon closes that blind spot.
 
-See [EPIC.md](./EPIC.md) for the full implementation plan, the hard
-technical problems this project is built around, and a running log of
-what's been learned.
+See [EPIC.md](./EPIC.md) for the implementation plan, the hard problems,
+and the running log.
 
 ## Scope
 
 **In scope:**
 - gRPC-over-HTTP/2 tracing for Go services
-- TLS transparency via `crypto/tls` uprobes (no OpenSSL dependency)
+- TLS transparency via `crypto/tls` uprobes, no OpenSSL dependency
 - Correct behavior across Go's stack-copying goroutine model
-- Kubernetes deployment as a DaemonSet, Prometheus metrics output
+- Kubernetes DaemonSet deployment, Prometheus metrics output
 
 **Explicitly out of scope (for now):**
-- Non-Go runtimes (no Node/Python/Java support)
-- Plain HTTP/1.1 (HTTP/2 demux is the hard problem worth solving; HTTP/1.1
-  parsing is comparatively trivial and not the point of this project)
-- HTTP/3 / QUIC (interesting follow-on, deliberately deferred)
-- Network policy enforcement / packet dropping (a different project)
-- A "complete network suite" — axon does one thing
+- Non-Go runtimes (no Node/Python/Java)
+- Plain HTTP/1.1, trivial parsing, not the point here
+- HTTP/3 / QUIC, deferred follow-on
+- Network policy enforcement / packet dropping, different project
+- A "complete network suite." axon does one thing
 
 ## Why it's hard
 
-1. **Go doesn't call OpenSSL.** The uprobe target has to be
-   `crypto/tls.(*Conn).Write` / `.Read` inside the Go binary itself, resolved
-   from that binary's own symbol table — there's no shared library to hook.
-2. **uretprobes corrupt Go binaries.** Go copies and moves goroutine stacks
-   at runtime; a uretprobe's return-address patch can be invalidated or land
-   in the wrong place. Returns have to be caught by disassembling the target
-   function and placing a uprobe on every `RET` instruction instead.
-3. **Go's calling convention is version- and register-dependent.** Go 1.17+
-   uses a register-based ABI (ABIInternal); earlier versions pass arguments
-   on the stack. Goroutines also migrate between OS threads mid-call, so
-   `pid`/`tid` isn't a valid correlation key — the goroutine ID has to be
-   read from the `g` struct via the `r14` register.
+1. **Go doesn't call OpenSSL.** Uprobe target is `crypto/tls.(*Conn).Write`
+   / `.Read` inside the binary itself, resolved from its own symbol table.
+   No shared library to hook.
+2. **uretprobes corrupt Go binaries.** Goroutine stacks move at runtime,
+   can invalidate a return-address patch mid-flight. Disassemble instead,
+   uprobe every `RET` instruction directly.
+3. **Go's ABI is version- and register-dependent.** 1.17+ is register-based
+   (ABIInternal), earlier is stack-based. Goroutines migrate OS threads
+   mid-call too, so `pid`/`tid` is useless as a key: goroutine ID comes off
+   the `g` struct via `r14`.
 
 ## Architecture
 
@@ -86,12 +78,12 @@ what's been learned.
 ## Tech stack
 
 - **eBPF programs:** C, libbpf, CO-RE (`vmlinux.h`, BTF relocations)
-- **Agent:** Go — ring buffer consumer, HTTP/2/HPACK/gRPC demux, ELF symbol
+- **Agent:** Go, ring buffer consumer, HTTP/2/HPACK/gRPC demux, ELF symbol
   resolution for uprobe placement
 - **Kubernetes packaging:** DaemonSet, Prometheus metrics endpoint, Grafana
   dashboard
-- **Test targets:** small Go gRPC client/server pair, built across a matrix
-  of Go versions to exercise the ABI differences
+- **Test targets:** small Go gRPC client/server pair, built across a Go
+  version matrix to exercise ABI differences
 
 ## Repo layout (planned)
 
