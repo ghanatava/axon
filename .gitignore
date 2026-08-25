@@ -65,4 +65,4 @@ vmlinux.h
 # === Kubernetes local artifacts ===
 kubeconfig
 *.kubeconfig
-classify
+
