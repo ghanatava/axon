@@ -2,17 +2,11 @@ package symbols
 
 import "testing"
 
-// This test proves Resolve() correctly reads the ELF symbol table, by
-// checking its answer against what `go tool nm` independently reported
-// for the same binary -- two different readers of the same on-disk
-// structure, so agreement here is a real correctness check, not a
-// tautology.
+// Cross-checks Resolve() against `go tool nm` for the same binary -- two
+// independent readers of the symbol table agreeing is a real check.
 //
-// NOTE: 0x499b40 is the exact address YOUR build produced. This will
-// almost certainly change if you rebuild (different Go version, any code
-// change, even toolchain patch versions can shift addresses) -- this test
-// is a one-time proof, not something to leave hardcoded long-term. We'll
-// talk about how to make this durable once it passes once.
+// wantAddr is this build's actual address, will drift on rebuild (Go
+// version, toolchain patch, any code change). One-time proof, not durable.
 func TestResolveClassify(t *testing.T) {
 	const binPath = "../../testtargets/retsites/classify"
 	const wantAddr = uint64(0x499b40)

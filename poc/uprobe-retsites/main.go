@@ -15,10 +15,8 @@ import (
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" RetSiteCount ../../bpf/retsite_count.bpf.c -- -I../../bpf/headers
 
-// attachPoint pairs a human-readable label with the address we're
-// attaching to and the cookie we'll use to identify it later. Cookie 0
-// is reserved for entry; 1/2/3 for the three RET sites, in the order
-// RetSites() returns them.
+// attachPoint: label + offset + cookie. cookie 0 = entry, 1-3 = RET
+// sites in RetSites() order.
 type attachPoint struct {
 	label  string
 	offset uint64
@@ -33,9 +31,7 @@ func main() {
 		log.Fatalf("removing memlock limit: %v", err)
 	}
 
-	// Reuse Phase 1's proven-correct resolution code directly -- this is
-	// exactly why we tested Resolve/RetSites independently first: we can
-	// now trust these numbers without re-verifying them here.
+	// already covered by symbols_test.go
 	_, err := symbols.Resolve(binPath, funcName)
 	if err != nil {
 		log.Fatalf("resolving symbol: %v", err)
@@ -72,9 +68,7 @@ func main() {
 		log.Fatalf("opening executable: %v", err)
 	}
 
-	// Attach the SAME loaded program four times, at four different
-	// addresses, each tagged with its own cookie -- this is the part that
-	// answers "which attach point fired" from inside count_site later.
+	// same prog, 4 addresses -- cookie tells count_site which one fired
 	var links []link.Link
 	for _, p := range points {
 		up, err := ex.Uprobe(funcName, objs.CountSite, &link.UprobeOptions{

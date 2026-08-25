@@ -7,13 +7,11 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
-// RetSites disassembles the function named `name` and returns the offset
-// of every RET instruction, relative to the function's own start address.
-// Each offset is exactly what you'd pass as a uprobe's Offset to catch
-// that specific return -- this is the direct replacement for a single
-// uretprobe, which is unsafe on Go binaries (see EPIC.md).
+// RetSites returns RET offsets in `name`, relative to its start -- feed
+// straight into a uprobe's Offset. Replaces uretprobe, unsafe on Go
+// binaries (EPIC.md).
 //
-// amd64 only for now -- x86asm.Decode is architecture-specific.
+// amd64 only.
 
 func RetSites(path, name string) ([]uint64, error) {
 	f, err := elf.Open(path)
@@ -30,8 +28,7 @@ func RetSites(path, name string) ([]uint64, error) {
 		return nil, fmt.Errorf("symbol %q has zero size -- can't bound the disassembly", name)
 	}
 
-	// Find which section contains this virtual address, so we can
-	// translate it into an offset into that section's actual file data.
+	// find the section backing sym.Address, for vaddr->file-offset translation
 	var text *elf.Section
 	for _, sec := range f.Sections {
 		if sec.Addr != 0 && sec.Addr <= sym.Address && sym.Address < sec.Addr+sec.Size {
@@ -47,7 +44,6 @@ func RetSites(path, name string) ([]uint64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading section data: %w", err)
 	}
-	// The actual virtual-address -> file-data-offset translation.
 	start := sym.Address - text.Addr
 	code := data[start : start+sym.Size]
 
@@ -62,7 +58,7 @@ func RetSites(path, name string) ([]uint64, error) {
 		if inst.Op == x86asm.RET {
 			rets = append(rets, offset)
 		}
-		offset += uint64(inst.Len) // walk forward by THIS instruction's real length
+		offset += uint64(inst.Len) // variable-length insns, no fixed stride
 	}
 	if len(rets) == 0 {
 		return nil, fmt.Errorf("no RET found in %q -- inlined?", name)

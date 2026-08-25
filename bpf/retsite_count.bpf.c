@@ -4,7 +4,7 @@
 #include "bpf_tracing.h"
 
 char __liscence[] SEC("licence") = "Dual MIT/GPL";
-// One slot per attachment point: 0 = entry, 1/2/3 = the three RET sites.
+// slot per attach point: 0=entry, 1-3=RET sites
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -13,10 +13,8 @@ struct {
     __type(value, __u64);
 } site_counts SEC(".maps");
 
-// No BPF_UPROBE macro here on purpose -- we're not targeting one fixed
-// symbol name at compile time. We attach this same compiled program to
-// four different addresses from Go, each with its own cookie, so the
-// section name is just "uprobe" with no target suffix.
+// no BPF_UPROBE macro -- one compiled prog gets attached at 4 addresses
+// from Go, each with its own cookie, hence bare SEC("uprobe")
 
 SEC("uprobe")
 int count_site(struct pt_regs *ctx){
