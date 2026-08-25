@@ -6,7 +6,6 @@
 *.so
 *.dylib
 /bin/
-/cmd/**/agent
 axon-agent
 
 # Test artifacts

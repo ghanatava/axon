@@ -41,6 +41,12 @@ Not needed for kernel struct access here (axon reads userspace Go memory),
 but still required for portable BPF type defs and any `task_struct` work
 (PID/cgroup lookups for k8s attribution).
 
+### Virtual address vs file offset for uprobes
+perf_event_open wants a file offset, not a virtual address. Raw
+st_value/gopclntab addresses fail attachment with EINVAL every time.
+Symbol-name lookup (cilium/ebpf's internal path) does this conversion;
+bypassing it with a raw Address is what broke.
+
 ### uprobes vs kprobes
 kprobes hook kernel functions. uprobes hook a file offset in a userspace
 binary. axon is uprobe-only: a kernel socket hook only sees ciphertext.
@@ -202,7 +208,7 @@ migration, connection churn.
 | Phase | Status | Notes |
 |---|---|---|
 | 0: Environment | Not started | |
-| 1: Go symbol resolution & RET sites | Done | See Notes & learnings below |
+| 1: Go symbol resolution & RET sites | Done | See Notes & learnings below; stripped-binary case verified after the fact (FileOffset fix) |
 | 2: TLS interception | Not started | |
 | 3: HTTP/2 demux | Not started | |
 | 4: HPACK & gRPC semantics | Not started | |
@@ -245,6 +251,23 @@ Two bugs worth remembering:
    address logic left.
 2. `-ldflags="-s -w"` strips the symbol table this whole technique
    depends on. Documented limitation, not a bug.
+
+### 2026-08-26: Virtual address vs file offset for uprobe attachment
+
+perf_event_open wants a file offset, not a virtual address. Raw
+st_value/gopclntab addresses fail with EINVAL every time, stripped or
+not, Offset field or no. cilium/ebpf's symbol-name lookup does this
+conversion internally; bypassing it with a raw Address is what broke.
+
+Fix: `Symbol.FileOffset = addr - section.Addr + section.Offset`, via
+the same section lookup RetSites uses. Predicted 0x99b40 for
+main.classify (vaddr 0x499b40, `.text` at vaddr 0x401000 / file offset
+0x1000), attach + fire confirmed it on both classify and
+classify_stripped.
+
+Also kills the unstripped-binary requirement: FileOffset comes from
+whichever of `.symtab`/`.gopclntab` resolved the symbol. Same fix
+closed both gaps.
 
 ## Resources
 

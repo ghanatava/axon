@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -15,31 +16,33 @@ import (
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" RetSiteCount ../../bpf/retsite_count.bpf.c -- -I../../bpf/headers
 
-// attachPoint: label + offset + cookie. cookie 0 = entry, 1-3 = RET
-// sites in RetSites() order.
 type attachPoint struct {
 	label  string
 	offset uint64
 	cookie uint64
 }
 
+var binPath = flag.String("bin", "testtargets/retsites/classify", "path to target binary")
+
 func main() {
-	const binPath = "testtargets/retsites/classify"
+	flag.Parse()
 	const funcName = "main.classify"
 
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatalf("removing memlock limit: %v", err)
 	}
 
-	// already covered by symbols_test.go
-	_, err := symbols.Resolve(binPath, funcName)
+	sym, err := symbols.Resolve(*binPath, funcName)
 	if err != nil {
 		log.Fatalf("resolving symbol: %v", err)
 	}
-	rets, err := symbols.RetSites(binPath, funcName)
+	rets, err := symbols.RetSites(*binPath, funcName)
 	if err != nil {
 		log.Fatalf("finding RET sites: %v", err)
 	}
+
+	fmt.Printf("resolved %s: vaddr=0x%x fileoff=0x%x size=%d\n",
+		funcName, sym.Address, sym.FileOffset, sym.Size)
 
 	points := []attachPoint{
 		{label: "entry", offset: 0, cookie: 0},
@@ -58,7 +61,7 @@ func main() {
 	}
 	defer objs.Close()
 
-	absPath, err := filepath.Abs(binPath)
+	absPath, err := filepath.Abs(*binPath)
 	if err != nil {
 		log.Fatalf("resolving absolute path: %v", err)
 	}
@@ -68,18 +71,22 @@ func main() {
 		log.Fatalf("opening executable: %v", err)
 	}
 
-	// same prog, 4 addresses -- cookie tells count_site which one fired
+	// FileOffset, not Address -- perf_event_open wants a byte position in
+	// the file, not a virtual address. This is the untested variable.
 	var links []link.Link
 	for _, p := range points {
-		up, err := ex.Uprobe(funcName, objs.CountSite, &link.UprobeOptions{
-			Offset: p.offset,
-			Cookie: p.cookie,
+		up, err := ex.Uprobe("", objs.CountSite, &link.UprobeOptions{
+			Address: sym.FileOffset,
+			Offset:  p.offset,
+			Cookie:  p.cookie,
 		})
 		if err != nil {
-			log.Fatalf("attaching uprobe at %s (offset 0x%x): %v", p.label, p.offset, err)
+			log.Fatalf("attaching uprobe at %s (fileoff=0x%x offset=0x%x): %v",
+				p.label, sym.FileOffset, p.offset, err)
 		}
 		links = append(links, up)
-		fmt.Printf("attached: %-10s offset=0x%x cookie=%d\n", p.label, p.offset, p.cookie)
+		fmt.Printf("attached: %-10s fileoff=0x%x offset=0x%x cookie=%d\n",
+			p.label, sym.FileOffset, p.offset, p.cookie)
 	}
 	defer func() {
 		for _, l := range links {
@@ -87,7 +94,7 @@ func main() {
 		}
 	}()
 
-	fmt.Println("\nrun ./classify in another terminal, then Ctrl-C here")
+	fmt.Printf("\nrun %s in another terminal, then Ctrl-C here\n", *binPath)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
