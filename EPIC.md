@@ -121,12 +121,12 @@ the compiled binary.
 ### Phase 2: TLS interception
 **Goal:** capture plaintext from `crypto/tls.(*Conn).Write`/`.Read` in a
 real Go TLS client/server.
-- [ ] Apply Phase 1's technique to Write and Read
-- [ ] Extract args correctly for both ABI0 and ABIInternal (two Go version
+- [ x ] Apply Phase 1's technique to Write and Read
+- [ x ] Extract args correctly for both ABI0 and ABIInternal (two Go version
   test builds)
-- [ ] Read goroutine ID from `r14`/`g` at entry, propagate to the matching
+- [ x ] Read goroutine ID from `r14`/`g` at entry, propagate to the matching
   return-site event
-- [ ] Copy plaintext buffer into the ring buffer event
+- [ x ] Copy plaintext buffer into the ring buffer event
 - **Exit:** plaintext HTTP/2 preface (`PRI * HTTP/2.0...`) visible in
   captured Write data, on both pre- and post-1.17 builds.
 
@@ -207,9 +207,9 @@ migration, connection churn.
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0: Environment | Not started | |
+| 0: Environment | Done | Toolchain and trivial uprobe verified |
 | 1: Go symbol resolution & RET sites | Done | See Notes & learnings below; stripped-binary case verified after the fact (FileOffset fix) |
-| 2: TLS interception | Not started | |
+| 2: TLS interception | Done | Live Read/Write capture verified on Go 1.16.15 and 1.24.5, both unstripped and -s -w; exact byte totals, zero capture errors/drops |
 | 3: HTTP/2 demux | Not started | |
 | 4: HPACK & gRPC semantics | Not started | |
 | 5: Correlation at scale | Not started | |
@@ -268,6 +268,63 @@ classify_stripped.
 Also kills the unstripped-binary requirement: FileOffset comes from
 whichever of `.symtab`/`.gopclntab` resolved the symbol. Same fix
 closed both gaps.
+
+### 2026-10-13: Phase 2 TLS capture verified
+
+- `bpf/tls_capture.bpf.c` attaches ordinary uprobes at Read/Write entry and
+  all discovered RET sites. No return-address patching.
+- ABIInternal: receiver AX, slice pointer BX, length CX; successful byte
+  count AX at RET. Go 1.16 stack ABI: receiver/slice at SP+8/+16/+24,
+  successful byte count at SP+40 at RET.
+- Current goroutine: R14 for register ABI; Linux amd64 FS-base minus eight
+  for Go 1.16, with FS-base read through kernel BTF/CO-RE. Goroutine-ID
+  offset comes from target DWARF when available, or a release-specific
+  layout when stripped.
+  Stack bounds layout is validated from DWARF when available. Stripped
+  targets use verified standard-release layouts for Go 1.16–1.26.
+  Go 1.23–1.24 place goid at 160; other supported releases use 152.
+  Sources: [Go 1.23 runtime layouts](https://github.com/golang/go/blob/go1.23.0/src/runtime/runtime2.go),
+  [Go 1.25 runtime layouts](https://github.com/golang/go/blob/go1.25.0/src/runtime/runtime2.go).
+  Unknown stripped versions fail explicitly; custom runtime forks require
+  DWARF or a separately verified layout.
+- In-flight calls are keyed by PID, goid, direction, and the return slot's
+  offset from `g.stack.hi`. This separates recursive calls, tolerates
+  morestack entry retries, and survives stack relocation. Stack-backed
+  buffer pointers are likewise rebased at return.
+- Both directions capture only the returned successful byte count, including
+  bytes returned alongside an error. Events include connection identity,
+  entry/return monotonic timestamps, and explicit total/captured lengths.
+- Payload limit: 4096 bytes per event. Truncation and failures are counted;
+  full chunking/loss recovery remains necessary before Phase 3 can consume
+  arbitrary-sized traffic correctly.
+- Agent/BPF build and Go tests checked locally. Standalone TLS fixture
+  passes on Go 1.16.15 and Go 1.25.0; metadata and RET-site tests cover both
+  stripped (`-s -w`) and unstripped builds. Extended layout/symbol/RET
+  matrix also passes on Go 1.23.0, 1.24.0, and 1.26.0, exercising both
+  runtime layout transitions. Live root-run matrix passes on Go 1.16.15
+  and Go 1.24.5, each unstripped and stripped: all eight TLS endpoints
+  capture plaintext HTTP/2 prefaces in both directions, exact byte totals,
+  zero memory/identity failures, zero map errors, and zero ring drops.
+  The newer run was initially mislabeled go1.25.0 in its filename because
+  querying Go version inside the module auto-selected a different toolchain
+  from the standalone build. Target build metadata confirms Go 1.24.5;
+  the script now queries version under the same environment as the build.
+  Each run exercises 160 truncated calls from the intentional 8192-byte
+  payload case. Logs: `build/capture-goVERSION-MODE.log`.
+- The live script's initial readiness check relied on `rg`, which was
+  unavailable in the terminal; replaced it with `grep`. Rootless agent
+  startup requires elevated BPF/perf privileges; run the live matrix with
+  root and `AXON_GO116`.
+- First root-run attempt reached the kernel verifier, which rejected a
+  signed copy-length range. Fixed by explicitly masking/bounding the small
+  unsigned length branch; the subsequent root-run load succeeded.
+- Existing `testtargets/client` and `testtargets/server` also rebuilt with
+  `-s -w` and verified to exchange all three messages over TLS.
+- Live checker runs stripped and unstripped builds, and requires plaintext
+  HTTP/2 prefaces on all eight TLS endpoint
+  connections in both directions, exact per-endpoint byte totals, zero
+  memory/map/ring errors, and exercised truncation. All four runs passed
+  the independent `scripts/verify-phase2.py` log checker.
 
 ## Resources
 
