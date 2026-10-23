@@ -4135,5 +4135,3 @@ static long (*bpf_kallsyms_lookup_name)(const char *name, int name_sz, int flags
  * 	**-EINVAL** for invalid **flags**.
  */
 static long (*bpf_find_vma)(struct task_struct *task, __u64 addr, void *callback_fn, void *callback_ctx, __u64 flags) = (void *) 180;
-
-
