@@ -1,0 +1,658 @@
+{
+  "uid": "axon-grpc",
+  "title": "Axon \u00b7 gRPC traffic",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "axon",
+    "grpc"
+  ],
+  "timezone": "browser",
+  "refresh": "2s",
+  "time": {
+    "from": "now-5m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "axon-prometheus"
+        },
+        "query": "label_values(axon_grpc_requests_total, service)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "axon-prometheus"
+        },
+        "query": "label_values(axon_grpc_requests_total, namespace)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "pod",
+        "label": "Pod",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "axon-prometheus"
+        },
+        "query": "label_values(axon_grpc_requests_total, pod)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "role",
+        "label": "Endpoint role",
+        "type": "custom",
+        "query": "server,client",
+        "includeAll": true,
+        "allValue": "server|client",
+        "multi": false,
+        "current": {
+          "text": "server",
+          "value": "server"
+        }
+      },
+      {
+        "name": "method",
+        "label": "Method",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "axon-prometheus"
+        },
+        "query": "label_values(axon_grpc_requests_total, method)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Completed RPCs / second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "Completed endpoint observations, not starts. Default server role avoids counting both endpoints.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method, role) (rate(axon_grpc_requests_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\",role=~\"$role\",method=~\"$method\"}[$__rate_interval]))",
+          "legendFormat": "{{method}} \u00b7 {{role}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Error rate",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "Fraction of completed observations with nonzero gRPC status. No traffic has no defined error ratio.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (method, role) (rate(axon_grpc_requests_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\",role=~\"$role\",method=~\"$method\",grpc_status!=\"0\"}[$__rate_interval])) or (sum by (method, role) (rate(axon_grpc_requests_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\",role=~\"$role\",method=~\"$method\"}[$__rate_interval])) * 0)) / sum by (method, role) (rate(axon_grpc_requests_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\",role=~\"$role\",method=~\"$method\"}[$__rate_interval]))",
+          "legendFormat": "{{method}} \u00b7 {{role}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "p95 observed latency",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "Capture request-to-response interval. Unknown timing is excluded; not application handler duration.",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, method, role) (rate(axon_grpc_request_duration_seconds_bucket{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\",role=~\"$role\",method=~\"$method\"}[$__rate_interval])))",
+          "legendFormat": "{{method}} \u00b7 {{role}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Completed RPCs by status",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method, role, grpc_status) (axon_grpc_requests_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\",role=~\"$role\",method=~\"$method\"})",
+          "legendFormat": "{{method}} \u00b7 {{role}} \u00b7 status {{grpc_status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Observations without timing",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method, role) (rate(axon_grpc_requests_without_timing_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\",role=~\"$role\",method=~\"$method\"}[$__rate_interval]))",
+          "legendFormat": "{{method}} \u00b7 {{role}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Producer capture errors / second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "Any capture loss means RPC observations can be incomplete. Zero RPC error rate does not prove loss-free capture.",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(axon_capture_errors_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\"}[$__rate_interval]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Active parser connections",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(axon_capture_active_connections{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\"})",
+          "legendFormat": "active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Retained parser buffers",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(axon_capture_retained_bytes{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\"})",
+          "legendFormat": "retained bytes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Connection lifecycle / second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event) (rate(axon_capture_connections_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\"}[$__rate_interval]))",
+          "legendFormat": "{{event}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Metric observations dropped by cardinality limit",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "Nonzero means some completed observations were omitted from RPC metric groups.",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(axon_metrics_dropped_observations_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\"})",
+          "legendFormat": "dropped observations"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Capture events discarded / second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(axon_capture_discarded_events_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\"}[$__rate_interval]))",
+          "legendFormat": "discarded"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Incomplete sessions / second",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(axon_capture_incomplete_total{service=~\"$service\",namespace=~\"$namespace\",pod=~\"$pod\"}[$__rate_interval]))",
+          "legendFormat": "incomplete"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Agent scrape health",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "axon-prometheus"
+      },
+      "description": "1 means the Prometheus scrape succeeded; 0 means metrics are unavailable. Workload filters do not apply to this panel.",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"axon\"}",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "description": "Passive Go TLS observations. Select one endpoint role to avoid double counting. Missing captures are not RPC successes."
+}

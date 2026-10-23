@@ -65,3 +65,16 @@ vmlinux.h
 kubeconfig
 *.kubeconfig
 
+
+# Generated PoC bindings and disposable fixture executables
+/poc/**/*_bpfel.go
+/poc/**/*_bpfeb.go
+/dump-write-regs
+/testtargets/client/client
+/testtargets/server/server
+/testtargets/retsites/classify
+/testtargets/retsites/classify_stripped
+
+# Python evaluator caches
+__pycache__/
+*.py[cod]

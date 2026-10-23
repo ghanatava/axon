@@ -3,38 +3,33 @@ package symbols
 import "testing"
 
 func TestResolveClassifyStripped(t *testing.T) {
-	const binPath = "../../testtargets/retsites/classify_stripped"
-	const wantAddr = uint64(0x499b40)
-
-	sym, err := Resolve(binPath, "main.classify")
+	plain, err := Resolve(buildClassify(t, false), "main.classify")
 	if err != nil {
-		t.Fatalf("Resolve failed on stripped binary: %v", err)
+		t.Fatal(err)
 	}
-
-	t.Logf("resolved %s: address=0x%x size=%d", sym.Name, sym.Address, sym.Size)
-
-	if sym.Address != wantAddr {
-		t.Errorf("address mismatch: got 0x%x, want 0x%x", sym.Address, wantAddr)
+	stripped, err := Resolve(buildClassify(t, true), "main.classify")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if sym.Size == 0 {
-		t.Error("size is 0")
+	if stripped.Address != plain.Address || stripped.FileOffset != plain.FileOffset || stripped.Size == 0 {
+		t.Fatalf("stripped %+v differs from unstripped %+v", stripped, plain)
 	}
 }
-
 func TestRetSitesClassifyStripped(t *testing.T) {
-	const binPath = "../../testtargets/retsites/classify_stripped"
-
-	rets, err := RetSites(binPath, "main.classify")
+	plain, err := RetSites(buildClassify(t, false), "main.classify")
 	if err != nil {
-		t.Fatalf("RetSites failed on stripped binary: %v", err)
+		t.Fatal(err)
 	}
-
-	t.Logf("found %d RET site(s) on stripped binary:", len(rets))
-	for i, off := range rets {
-		t.Logf("  [%d] offset 0x%x", i, off)
+	stripped, err := RetSites(buildClassify(t, true), "main.classify")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if len(rets) != 3 {
-		t.Errorf("expected 3 RET sites, got %d", len(rets))
+	if len(plain) != len(stripped) {
+		t.Fatalf("RET count differs: plain %v stripped %v", plain, stripped)
+	}
+	for i := range plain {
+		if plain[i] != stripped[i] {
+			t.Fatalf("RET offsets differ: plain %v stripped %v", plain, stripped)
+		}
 	}
 }

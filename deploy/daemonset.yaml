@@ -1,3 +1,38 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: axon
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: axon
+  namespace: axon
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: axon-pod-reader
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: axon-pod-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: axon-pod-reader
+subjects:
+  - kind: ServiceAccount
+    name: axon
+    namespace: axon
+---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -11,29 +46,84 @@ spec:
     metadata:
       labels:
         app: axon
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9108"
     spec:
+      serviceAccountName: axon
       hostPID: true
+      nodeSelector:
+        kubernetes.io/os: linux
+        kubernetes.io/arch: amd64
+      tolerations:
+        - operator: Exists
+      terminationGracePeriodSeconds: 15
       containers:
         - name: axon-agent
-          image: axon:latest
+          image: axon:phase7
+          imagePullPolicy: IfNotPresent
+          args:
+            - -discover
+            - -bpf
+            - /opt/axon/tls_capture.bpf.o
+            - -metrics-listen
+            - :9108
+            - -max-targets
+            - "4"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: AXON_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
           securityContext:
             privileged: true
-            capabilities:
-              add:
-                - BPF
-                - SYS_ADMIN
-                - NET_ADMIN
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          ports:
+            - name: metrics
+              containerPort: 9108
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
           volumeMounts:
             - name: sys
               mountPath: /sys
-              readOnly: true
-            - name: proc
-              mountPath: /proc
               readOnly: true
       volumes:
         - name: sys
           hostPath:
             path: /sys
-        - name: proc
-          hostPath:
-            path: /proc
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: axon
+  namespace: axon
+spec:
+  clusterIP: None
+  selector:
+    app: axon
+  ports:
+    - name: metrics
+      port: 9108
+      targetPort: metrics

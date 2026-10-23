@@ -1,45 +1,58 @@
 package symbols
 
-import "testing"
+import (
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
 
-// Cross-checks Resolve() against `go tool nm` for the same binary -- two
-// independent readers of the symbol table agreeing is a real check.
-//
-// wantAddr is this build's actual address, will drift on rebuild (Go
-// version, toolchain patch, any code change). One-time proof, not durable.
-func TestResolveClassify(t *testing.T) {
-	const binPath = "../../testtargets/retsites/classify"
-	const wantAddr = uint64(0x499b40)
-
-	sym, err := Resolve(binPath, "main.classify")
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+func buildClassify(t *testing.T, stripped bool) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "classify")
+	args := []string{"build", "-o", bin}
+	if stripped {
+		args = append(args, "-ldflags=-s -w")
 	}
-
-	t.Logf("resolved %s: address=0x%x size=%d", sym.Name, sym.Address, sym.Size)
-
-	if sym.Address != wantAddr {
-		t.Errorf("address mismatch: got 0x%x, want 0x%x (from `nm`)", sym.Address, wantAddr)
+	args = append(args, "../../testtargets/retsites/main.go")
+	if out, err := exec.Command("go", args...).CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
 	}
-	if sym.Size == 0 {
-		t.Error("size is 0 -- Phase 1's disassembly step needs a nonzero size to bound itself")
-	}
+	return bin
 }
 
-func TestRetSitesClassify(t *testing.T) {
-	const binPath = "../../testtargets/retsites/classify"
-
-	rets, err := RetSites(binPath, "main.classify")
+// Cross-check an independently built fixture against Go's symbol reader.
+func TestResolveClassify(t *testing.T) {
+	bin := buildClassify(t, false)
+	sym, err := Resolve(bin, "main.classify")
 	if err != nil {
-		t.Fatalf("RetSites failed: %v", err)
+		t.Fatal(err)
 	}
-
-	t.Logf("found %d RET site(s):", len(rets))
-	for i, off := range rets {
-		t.Logf("  [%d] offset 0x%x", i, off)
+	out, err := exec.Command("go", "tool", "nm", bin).Output()
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	var want uint64
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[2] == "main.classify" {
+			want, err = strconv.ParseUint(fields[0], 16, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if want == 0 || sym.Address != want || sym.Size == 0 || sym.FileOffset == 0 {
+		t.Fatalf("resolved %+v; nm address %#x", sym, want)
+	}
+}
+func TestRetSitesClassify(t *testing.T) {
+	rets, err := RetSites(buildClassify(t, false), "main.classify")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rets) != 3 {
-		t.Errorf("expected 3 RET sites (one per return statement in classify), got %d", len(rets))
+		t.Fatalf("expected 3 RET sites, got %v", rets)
 	}
 }
