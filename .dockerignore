@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!build/
+!build/axon-agent
+!build/tls_capture.bpf.o
+!build/phase7/
+!build/phase7/fixture-*
+!deploy/
+!deploy/phase7/
+!deploy/phase7/Dockerfile.fixture
+!testtargets/
+!testtargets/certs/
+!testtargets/certs/cert.pem
+!testtargets/certs/key.pem

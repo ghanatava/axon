@@ -1,3 +1,5 @@
+//go:build axon_poc
+
 package main
 
 import (
@@ -14,7 +16,7 @@ import (
 	"github.com/ghanatava/axon/internal/symbols"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" RetSiteCount ../../bpf/retsite_count.bpf.c -- -I../../bpf/headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags axon_poc -cc clang -cflags "-O2 -g -Wall" RetSiteCount ../../bpf/retsite_count.bpf.c -- -I../../bpf/headers
 
 type attachPoint struct {
 	label  string

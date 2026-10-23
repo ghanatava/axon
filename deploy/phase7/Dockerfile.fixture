@@ -1,0 +1,8 @@
+FROM debian:bookworm-slim
+ARG MODE=unstripped
+COPY build/phase7/fixture-${MODE} /fixture
+COPY --chmod=444 testtargets/certs/cert.pem /etc/axon/cert.pem
+COPY --chmod=444 testtargets/certs/key.pem /etc/axon/key.pem
+RUN chmod 755 /etc/axon
+USER 65532
+ENTRYPOINT ["/fixture"]

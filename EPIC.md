@@ -72,8 +72,10 @@ Read directly from register state at uprobe-entry time.
 
 ### HTTP/2 framing
 TLS read/write hooks hand over raw bytes, not frame-aligned (TLS record
-boundaries don't match HTTP/2 frame boundaries). Reassemble per-connection
-first, then split into typed frames, then demux by stream ID.
+boundaries don't match HTTP/2 frame boundaries). Reassemble separately per (PID, TLS connection pointer, direction),
+then split into typed frames and route by stream ID. Do not include goid
+in this key: HTTP/2 transport goroutines share a connection. Both directions
+use the same stream IDs but have independent byte streams and HPACK state.
 
 ### HPACK
 Dynamic table evolves per-connection, so a `HEADERS` frame doesn't decode
@@ -133,19 +135,19 @@ real Go TLS client/server.
 ### Phase 3: HTTP/2 frame capture & stream demux
 **Goal:** byte chunks that don't align to frame boundaries, turned into a
 clean per-stream frame sequence.
-- [ ] Connection-scoped reassembly buffer, keyed by (pid, goroutine id,
-  fd/conn identifier)
-- [ ] Parse the 9-byte frame header, split buffer into frames
-- [ ] Demux frames by stream ID
+- [ x ] Connection-scoped reassembly buffers, keyed by (pid, TLS connection
+  pointer, direction); goroutine IDs identify calls, not connections
+- [ x ] Parse the 9-byte frame header, split buffer into frames
+- [ x ] Demux frames by stream ID
 - **Exit:** correct ordered frame sequence for 2+ concurrent streams on one
   connection.
 
 ### Phase 4: HPACK & gRPC semantics
 **Goal:** method name and message payloads out of the wire.
-- [ ] HPACK decoder with per-connection dynamic table state
-- [ ] Decode HEADERS frames for `:path` and other pseudo-headers
-- [ ] Parse gRPC's 5-byte length-prefixed message framing in DATA frames
-- [ ] Correlate request stream -> response stream -> full call record
+- [ x ] HPACK decoder with per-connection dynamic table state
+- [ x ] Decode HEADERS frames for `:path` and other pseudo-headers
+- [ x ] Parse gRPC's 5-byte length-prefixed message framing in DATA frames
+- [ x ] Correlate request stream -> response stream -> full call record
   (method, sizes, status, latency)
 - **Exit:** complete correct call record with method name, zero client/
   server code changes.
@@ -153,24 +155,24 @@ clean per-stream frame sequence.
 ### Phase 5: Agent hardening & correlation at scale
 **Goal:** survive concurrent connections, multiple processes, thread
 migration, connection churn.
-- [ ] Multi-connection, multi-process test, verify no cross-contamination
-- [ ] Handle connection close, cleanup stale per-connection state
-- [ ] Backpressure/drop handling if the ring buffer outpaces the agent
+- [ x ] Multi-connection, multi-process test, verify no cross-contamination
+- [ x ] Handle connection close, cleanup stale per-connection state
+- [ x ] Backpressure/drop handling if the ring buffer outpaces the agent
 - **Exit:** sustained load test, zero misattributed calls.
 
 ### Phase 6: Observability output
 **Goal:** useful, not just correct.
-- [ ] Prometheus metrics: request count, latency histogram, error rate,
+- [ x ] Prometheus metrics: request count, latency histogram, error rate,
   labeled by method and pod/service
-- [ ] Grafana dashboard
+- [ x ] Grafana dashboard
 - **Exit:** dashboard showing live gRPC traffic from the test workload.
 
 ### Phase 7: Kubernetes packaging
 **Goal:** deployable like a real cluster tool, not a hardcoded demo.
-- [ ] DaemonSet manifest, privileged/CAP_BPF requirements documented
-- [ ] Discover target Go processes on a node: process discovery, binary
+- [ x ] DaemonSet manifest, privileged/CAP_BPF requirements documented
+- [ x ] Discover target Go processes on a node: process discovery, binary
   path resolution, per-process attach/detach lifecycle
-- [ ] RBAC, resource limits
+- [ x ] RBAC, resource limits
 - **Exit:** deployed to a real (or kind/minikube) cluster, no manual
   per-pod setup.
 
@@ -210,11 +212,11 @@ migration, connection churn.
 | 0: Environment | Done | Toolchain and trivial uprobe verified |
 | 1: Go symbol resolution & RET sites | Done | See Notes & learnings below; stripped-binary case verified after the fact (FileOffset fix) |
 | 2: TLS interception | Done | Live Read/Write capture verified on Go 1.16.15 and 1.24.5, both unstripped and -s -w; exact byte totals, zero capture errors/drops |
-| 3: HTTP/2 demux | Not started | |
-| 4: HPACK & gRPC semantics | Not started | |
-| 5: Correlation at scale | Not started | |
-| 6: Observability output | Not started | |
-| 7: Kubernetes packaging | Not started | |
+| 3: HTTP/2 demux | Done | Incremental framing + stream routing; independent evaluator and live stripped/unstripped TLS capture pass |
+| 4: HPACK & gRPC semantics | Done | Independent evaluator and live Go 1.25 stripped/unstripped grpc-go TLS tests pass: 10 exact records each |
+| 5: Correlation at scale | Done | Live stripped/unstripped load: 7,920 RPCs each across three processes, zero misattribution; ring-pressure recovery verified |
+| 6: Observability output | Done | Prometheus endpoint, bounded workload/method metrics and provisioned Grafana; live regular/-s -w matrix and panel queries verified |
+| 7: Kubernetes packaging | Done | Live kind deployment: automatic process/pod attribution, stripped workloads, restart/exec lifecycle, cleanup and RBAC verified |
 | 8: Stretch | Deferred | |
 
 ## Notes & learnings
@@ -295,8 +297,8 @@ closed both gaps.
   bytes returned alongside an error. Events include connection identity,
   entry/return monotonic timestamps, and explicit total/captured lengths.
 - Payload limit: 4096 bytes per event. Truncation and failures are counted;
-  full chunking/loss recovery remains necessary before Phase 3 can consume
-  arbitrary-sized traffic correctly.
+  Phase 3 adds bounded chunking (see the next entry); per-connection loss
+  attribution/recovery remains a Phase 5 task.
 - Agent/BPF build and Go tests checked locally. Standalone TLS fixture
   passes on Go 1.16.15 and Go 1.25.0; metadata and RET-site tests cover both
   stripped (`-s -w`) and unstripped builds. Extended layout/symbol/RET
@@ -326,6 +328,119 @@ closed both gaps.
   memory/map/ring errors, and exercised truncation. All four runs passed
   the independent `scripts/verify-phase2.py` log checker.
 
+### 2026-10-24: Phase 3 framing and stream demultiplexing verified
+
+- `internal/h2demux` incrementally handles split client prefaces, partial
+  9-byte headers and payloads, and multiple frames in one TLS call. It
+  requires an initial non-ACK SETTINGS frame in each observed direction;
+  attach before connection traffic starts rather than guessing midstream
+  alignment. Frames retain connection identity, direction, stream ID,
+  per-direction wire sequence, flags, and owned raw payload bytes.
+- Reassembly keys are `(PID, tls.Conn pointer, direction)`. This corrects
+  the original plan's goid component: reads/writes of the same connection
+  can come from different goroutines. GoID and entry timestamp correlate
+  chunks of one call. Stream 0 control frames are retained; unknown frame
+  types are preserved, the reserved stream-ID bit is masked, and incomplete
+  header blocks require same-stream CONTINUATION without interleaving.
+- Framing checks cover stream-ID/size constraints, padding, priority
+  prefixes, SETTINGS values, and incomplete EOF. This is a framing layer,
+  not the full HTTP/2 stream state machine or HPACK/gRPC interpretation.
+- BPF HTTP/2 mode now emits 4096-byte chunks with call offsets, up to
+  256KiB per successful TLS call. Old 56-byte event headers still decode;
+  new headers are 64 bytes. Raw mode keeps its 4KiB diagnostic preview.
+  Chunk gaps, overlaps, mixed calls and immediate completed-call duplicates
+  fail closed. Configurable frame/connection bounds limit retained state.
+- `axon-agent -mode h2` writes JSON frames with base64 payloads. It stops
+  on capture memory/map errors, ring drops, or calls beyond the capture
+  bound; it never silently stitches across known missing bytes. Missing
+  bytes cannot be recovered by scanning for plausible headers. Automatic
+  loss attribution, connection cleanup/reuse, and arbitrary concurrent
+  same-direction writers remain Phase 5 work. Feed assumes wire order.
+- `-replay EVENTS.jsonl` exercises the same agent/parser pipeline without
+  root. `testtargets/h2phase3` sends streams 1 and 3 over real TLS, including
+  fragmented headers, interleaved DATA, PINGs, 10KB/9KB frame payloads and
+  >4KiB writes. Its optional recorder is test instrumentation with synthetic
+  identity; rootless replay does not validate live probes.
+- After implementation, an independent evaluator wrote parser, chunk
+  decoding and CLI/replay tests. It found completed-call duplication and
+  ambiguous preface detection for length bytes beginning with `P`; both
+  were fixed and covered by regression tests. Race tests and repeated
+  bounded segmentation fuzzing passed, including a final 60,982 executions.
+  The golden checker rejects missing/duplicated frames, corrupted payloads,
+  wrong stream IDs and changed sequence numbers.
+- `scripts/evaluate-phase3.sh` passes on stripped/unstripped rootless TLS
+  fixture builds: 30 exact golden frames per run, two streams, both TLS
+  endpoints and directions. `go test ./...` (including the Go 1.16 target
+  metadata matrix) and `go vet ./...` pass.
+- Live `scripts/test-phase3.sh` passes on Go 1.24.5, unstripped and `-s -w`:
+  verifier accepted the new BPF program, all 30 frames match the independent
+  golden checker, and memory/identity/map/ring/truncation counters are zero.
+  Evidence: `build/phase3/live-go1.24.5-{unstripped,stripped}.{jsonl,log}`.
+  The new chunked capture path has not yet been live-tested on Go 1.16;
+  its metadata/stripped resolution checks pass and the live matrix accepts
+  `AXON_GO116` for that additional run.
+
+### 2026-10-24: Phase 4 gRPC reconstruction and independent evaluation
+
+- `internal/grpc` consumes ordered frames from Phase 3. Each connection
+  direction has its own `x/net/http2/hpack` decoder, retained across streams
+  and non-gRPC header blocks. HEADERS/CONTINUATION assembly strips padding
+  and priority prefixes; PUSH_PROMISE blocks still update HPACK state.
+  Peer SETTINGS controls allowed dynamic table updates within a local cap.
+- Calls correlate by PID, TLS connection pointer and stream ID. Request
+  direction is learned from pseudo-headers, so both client/server capture
+  and response-before-request event arrival work. Method is `:path`.
+  Request/response headers and final trailers are retained separately.
+- DATA payloads pass through a per-stream/direction five-byte gRPC envelope
+  parser. Message prefixes/bodies can span frames or share a frame. Unary
+  and streaming calls, empty messages, and trailers-only errors are handled.
+  Payloads remain opaque protobuf/JSON bytes; gzip messages are decompressed
+  individually. Unsupported compression fails explicitly, never guessing.
+- JSON call records include method, messages (base64 bytes), compression,
+  gRPC status/source/message, HTTP status, decoded sizes and
+  gRPC wire sizes (including five-byte message envelopes, excluding HTTP/2
+  and TLS overhead). Missing gRPC status uses the HTTP fallback mapping or
+  UNKNOWN; RST_STREAM emits an explicitly reset call with its mapped status.
+  Percent decoding preserves literal `+` and retains malformed escapes.
+- Phase 3 frames now carry capture-clock observation bounds. Latency is
+  request HEADERS observation completion to response end observation, not
+  application execution time. Unknown or reversed timestamps produce
+  `timing_valid=false` instead of unsigned underflow or invented latency.
+- Resource defaults: 64KiB compressed/expanded header blocks, 64KiB maximum
+  negotiated dynamic table, 4MiB wire/decompressed message, 8MiB retained
+  decoded payload per call, 1024 messages per call, 4096 stream slots per
+  connection and 1024 connections. Completed stream tombstones remain until
+  `Forget`; automatic lifecycle/reuse hardening remains Phase 5. Known gaps,
+  malformed headers, incomplete messages and open gRPC calls at EOF fail
+  explicitly. Raw and HTTP/2 modes remain available.
+- `testtargets/grpcphase4` uses actual grpc-go over TLS with one connection:
+  four concurrent unary calls (ordinary, large, gzip, INVALID_ARGUMENT)
+  and one bidirectional stream with three messages each way. No protobuf
+  generation tool is needed: it uses protobuf `BytesValue` and a service
+  descriptor. Its optional recorder produces rootless test inputs with
+  synthetic identities; live tracing runs without the recorder flag.
+- After implementation, an independent evaluator added HPACK, framing,
+  correlation, payload ownership, limits, timing, CLI and replay tests. It
+  found ambiguous duplicate content-type/grpc-encoding handling; critical
+  duplicates now fail explicitly and the regression passes. Race tests and
+  162,653 bounded fuzz executions passed. Both stripped and unstripped
+  real-TLS fixture replays produced 10 exact golden call records (five
+  logical calls observed at both endpoints), including exact protobuf
+  payloads, gzip flags, status 3/error text, sizes and timing. Corrupted
+  inputs and golden output are rejected. See `scripts/evaluate-phase4.sh`,
+  `scripts/verify-phase4.py` and `build/phase4-evaluation/REPORT.md`.
+- Full repository tests and vet pass, including the existing Go 1.16
+  target inspection matrix. The actual grpc-go fixture is module-based
+  and builds with the module's Go 1.25+ toolchain; standalone Phase 2/3
+  fixtures remain available for older-ABI checks.
+- Live `scripts/test-phase4.sh` passed on Go 1.25.0 with unstripped and
+  `-s -w` binaries. The fixture ran with its recorder disabled: actual TLS
+  plaintext came from the existing uprobes. Each output matches the
+  independent checker's ten exact golden records, and memory/identity,
+  map-error, ring-drop and truncation counters are zero. Target build
+  metadata independently confirms Go 1.25.0 and stripping flags. Evidence:
+  `build/phase4/live-go1.25.0-{unstripped,stripped}.{jsonl,log}`.
+
 ## Resources
 
 - [Andrii Nakryiko's blog](https://nakryiko.com/) - best primary source for
@@ -340,3 +455,94 @@ closed both gaps.
 - [HTTP/2 RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html)
 - [HPACK RFC 7541](https://www.rfc-editor.org/rfc/rfc7541.html)
 - [gRPC over HTTP/2 spec](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)
+
+
+### 2026-10-24: Phase 5 lifecycle, isolation and load evaluation
+
+- Capture identities now include PID, process birth time, TLS pointer and
+  capture generation. Per-direction call sequences and chunk offsets detect
+  missing or reordered data. TLS Close releases connection state; idle expiry,
+  connection limits and a retained-buffer budget bound userspace state.
+- Completed gRPC streams release their buffers and stream slots. A request-ID
+  watermark prevents reopening completed streams; 4096 is a concurrent stream
+  bound, not a connection lifetime limit. This supersedes Phase 4's tombstone note.
+- Correlated producer failures quarantine the affected connection; unknown
+  capture failures stop parsing globally. Same-direction overlapping TLS calls
+  are quarantined rather than assigned a guessed wire order. Recovery requires
+  a new connection generation; arbitrary midstream resynchronization is unsupported.
+- Rootless evaluator: race checks, 5,000 calls on one connection, malformed/lost
+  capture cases, three-process real-TLS recorder/replay in regular and stripped
+  builds (4,680 RPCs / 9,360 endpoint observations each).
+- Live Go 1.25.0: regular and `-s -w` builds each produced 15,840 exact endpoint
+  records for 7,920 RPCs across three processes and 396 TLS incarnations. All six
+  producer error counters were zero. Observed pointer reuse: 229 / 207;
+  goroutine thread changes: 40,333 / 41,790. Both ended with zero active sessions
+  and zero retained parser bytes.
+- Deliberately stopping the consumer filled a 256KiB ring (8 drops). The checker
+  accepted only correctly attributed surviving records and required all 20
+  observations from the subsequent healthy worker. Final active/retained state
+  was zero. Kernel process cleanup conservatively checks process birth identity.
+- Commands: `./scripts/evaluate-phase5.sh` and
+  `sudo env PATH="$PATH" ./scripts/test-phase5.sh`.
+  Evidence: `build/phase5-evaluation/REPORT.md`, `build/phase5/`.
+
+
+### 2026-10-24: Phase 6 metrics and Grafana
+
+- Added opt-in Prometheus `/metrics` and final text snapshots. Completed RPCs,
+  status, latency histograms, untimed observations and protobuf byte totals have
+  method/endpoint-role and static target service/namespace/pod labels. Selecting
+  one role avoids double-counting both sides of a local RPC. Unknown timing is
+  excluded from histograms; interrupted captures are not labeled successful.
+- Metrics state is bounded by method/role/status groups, with visible overflow.
+  Capture producer errors and session cleanup/resource snapshots are exported
+  separately so capture loss cannot masquerade as a healthy RPC error rate.
+- Provisioned a Linux loopback Docker Compose Prometheus/Grafana stack and 13
+  panels with workload/method/role filters, rate/error/p95 queries and capture
+  health. Static labels require correctly scoped target selection; automatic
+  Kubernetes attribution remains Phase 7.
+- Rootless regular/-s -w TLS recorder/replay tests checked 10 endpoint records
+  each against HTTP scrapes and final snapshots. Live eBPF tests checked 200
+  records each (100 RPCs, including 20 RPC errors), all six producer counters
+  zero, 40 connections closed, zero retained bytes. Byte counters and every
+  histogram bucket were compared with JSON call records.
+- Actual Prometheus scrapes, Grafana datasource access and all 13 dashboard
+  queries validated; throughput, error and latency series had live values.
+  `scripts/demo-phase6.sh` provides repeatable live traffic until Ctrl-C.
+- Evaluation: scripts/evaluate-phase6.sh, scripts/test-phase6.sh and
+  scripts/verify-phase6-dashboard.py. Evidence: build/phase6-evaluation/REPORT.md.
+
+
+### 2026-10-24: Phase 7 Kubernetes packaging and node discovery
+
+- Added artifact-based runtime image, a node DaemonSet, service account, read-only
+  pod-list RBAC, headless metrics Service, probes and resource requests/limits.
+  Default capture is bounded to four per-process workers, each with independent
+  ABI configuration, BPF maps/ring and protocol state.
+- Kubernetes API refreshes are node-filtered, paginated and bounded; CA-verified
+  requests re-read rotated projected tokens. Exact cgroup runtime IDs map node
+  processes to running containers. Own/system pods and unsupported binaries are
+  skipped. Optional label/namespace filters scope discovery without manual PIDs
+  or application binary paths.
+- Process identity includes PID/birth/stack/executable inode; executable FDs are
+  pinned. A kernel sched_process_exec guard prevents joining two runtimes after
+  exec, even with unchanged PID and executable inode. Node-namespace PID/TID
+  resolution uses CO-RE ancestor PID numbers, covering kind's nested namespace.
+- RPC metrics accept discovered workload labels under one global cardinality
+  bound. Node capture-health counters accumulate across worker replacement;
+  discovery reports active/resident/deferred workers and metadata/failure state.
+- Live Kubernetes v1.32.2 kind on Linux 6.8: 40 RPCs / 80 exact client/server
+  records, three pod identities, normal and -s -w Go 1.25 images, pod replacement
+  and same-PID self-exec. Payload/status/PID/pod UID/container/service attribution
+  and metrics verified; eight TLS connection incarnations opened and closed,
+  zero capture errors, retained bytes zero. Non-Go exclusion and list-pods /
+  denied-secrets RBAC checked. Rootless/race tests cover metadata pagination,
+  token rotation, cgroup v1/v2 formats, PID/exec identities and deleted images.
+- Phase 6 live regular/stripped regression also passes after namespace changes.
+  Limitations: polling can miss short-lived targets and pre-attach traffic;
+  existing HTTP/2 sessions cannot resynchronize arbitrarily. Privileged baseline
+  evaluated; capability-only operation and a production multi-node cluster are
+  not claimed. Full guide: deploy/phase7/README.md.
+- Commands: scripts/evaluate-phase7.sh and scripts/test-phase7.sh. Evidence:
+  build/phase7-evaluation/REPORT.md, agent.log, identities.json, calls.jsonl,
+  active.metrics/final.metrics, batches.json and rbac.txt.

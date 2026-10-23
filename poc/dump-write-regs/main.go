@@ -1,3 +1,5 @@
+//go:build axon_poc
+
 package main
 
 import (
@@ -13,7 +15,7 @@ import (
 	"github.com/ghanatava/axon/internal/symbols"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" DumpWriteRegs ../../bpf/dump_write_regs.bpf.c -- -I../../bpf/headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags axon_poc -cc clang -cflags "-O2 -g -Wall" DumpWriteRegs ../../bpf/dump_write_regs.bpf.c -- -I../../bpf/headers
 
 var binPath = flag.String("bin", "testtargets/client/client", "path to target binary")
 
